@@ -1,0 +1,318 @@
+---
+title: "R Notebook"
+output:
+  html_document:
+    df_print: paged
+---
+
+
+```{r}
+knitr::opts_chunk$set(message = FALSE, cache = FALSE, echo = TRUE)
+```
+
+
+```{r reading_packages}
+require(sctree)
+require(Seurat)
+require(tidyverse)
+require(edgeR)
+
+```
+
+# EdgeR diff expression within clusters
+
+```{r reading_data}
+message(paste0("Reading Data"))
+#immune.combined <- readRDS("./immune_combined_seurat.RDS")
+immune.combined <-readRDS("./cellranger_seurat/combinedOct14/combined_seurat.RDS")
+```
+
+```{r umap_plots}
+message(paste0("Dim plots"))
+DimPlot(immune.combined, reduction = "umap", group.by = "Subtype")
+DimPlot(immune.combined, reduction = "umap", label = TRUE)
+```
+
+
+```{r umap_plots2}
+gsub <- DimPlot(immune.combined, reduction = "umap", split.by = "Subtype") + theme_bw()
+ggsave(plot = gsub, "separate_clustering_subtype.png", height = 8, width = 10)
+```
+
+```{r create_edger_object}
+# This just looks for the final clustering to be used later as the labels
+snns <- grep(pattern = "integrated_snn_res", 
+             names(immune.combined@meta.data),
+             value = TRUE)
+
+last_snn <- snns[length(snns)]
+
+Idents(immune.combined) <- paste0(
+    immune.combined@meta.data[[last_snn]],
+    "_", immune.combined@meta.data$Subtype)
+
+tmp <- immune.combined@assays$RNA@counts
+
+
+
+
+clusters <- as.character(immune.combined@meta.data[[last_snn]])
+sample <- as.character(immune.combined@meta.data$Subtype)
+
+##### MODIFY HERE IF YOU WANT ONLY A SUBSET TO BE ANALYZED
+subset_vector <- runif(ncol(tmp)) < 1
+
+message(
+    paste0("Subsetting matrix to only ", 
+           sum(subset_vector),
+           " cells, from ", ncol(tmp)))
+
+tmp <- tmp[,subset_vector]
+clusters <- factor(make.names(clusters[subset_vector]))
+sample <- factor(sample[subset_vector])
+
+design <- model.matrix(~ 0 + sample:clusters)
+
+####### END OF SUBSETTING
+library(parallel)
+test<-mclapply(data.matrix(tmp),mc.cores = 20)
+y <- DGEList(
+    data.matrix(tmp),
+    group = sample,
+    remove.zeros = TRUE)
+
+# Keeping genes with at least 50 cells with expression values
+keep <- rowSums(cpm(y) > 1) >= 50 
+
+message(paste0("Removing ", sum(!keep),
+               " rows due to low expression; keeping ", sum(keep)))
+
+y <- y[keep, , keep.lib.sizes = FALSE]
+
+
+```
+
+
+
+```{r dispersion_estimate}
+
+if (!file.exists("DGEList_seurat_integrated.RDS")) {
+  
+  y <- calcNormFactors(y)
+  
+  message(paste0("Starting estimating dispersions 1/5"))
+  ttime  <- system.time({
+     suppressWarnings({
+          y <- estimateDisp(y, design)
+      }) 
+  })
+  
+  
+  message(paste0("... 2/5 ", ttime[[3]]))
+  ttime  <- system.time({
+      y <- estimateGLMCommonDisp(y, design)
+  })
+  
+  message(paste0("... 3/5 ", ttime[[3]]))
+  ttime  <- system.time({
+      y <- estimateGLMTrendedDisp(y, design)
+  })
+  
+  message(paste0("... 4/5 ", ttime[[3]]))
+  ttime  <- system.time({
+      y <- estimateGLMTagwiseDisp(y, design)
+  })
+  
+  saveRDS(y, file = "DGEList_seurat_integratedOct17.RDS")
+  
+} else {
+  message("Reading from cache")
+  warning("Reading from cache, only the size of object and design is checked so make sure its what you want")
+  y2 <- readRDS( "DGEList_seurat_integrated.RDS")
+  stopifnot(all(dim(y) == dim(y2)))
+  stopifnot(all(y$design == y2$design))
+
+  y <- y2
+  rm(y2)
+}
+
+message(paste0("... Starting QLMFit 5/5"))
+ttime  <- system.time({
+    fit <- glmQLFit(y, design, robust = TRUE)
+})
+
+plotQLDisp(fit)
+message(paste0("... DONE", ttime[[3]]))
+
+```
+
+```{r}
+
+coefs_tt <- fit$coefficients + aveLogCPM(fit)
+
+mean_cpms <- coefs_tt %>%
+  as.data.frame() %>% 
+  {
+    .$gene <- rownames(.)
+    return(.)
+  } %>%
+  reshape2::melt(., variable.name = "coef", value.name = "logCPM") %>%
+  separate(coef, into = c("Sample", "Cluster")) %>% 
+  group_by(gene, Cluster) %>% 
+  summarise(mean_logCPM = mean(logCPM)) %>% 
+  ungroup()
+
+mean_cpms_indexed <- wrapr::named_map_builder(
+  names = paste0(mean_cpms$Cluster, mean_cpms$gene),
+  values = mean_cpms$mean_logCPM)
+
+saveRDS(mean_cpms, file = "mean_cpms.RDS")
+saveRDS(mean_cpms_indexed, file = "mean_cpms_indexed.RDS")
+
+for (cluster in sort(unique(clusters))) {
+    design_elems <- colnames(design)
+    contrast <- rep(0, length(design_elems))
+    names(contrast) <- design_elems
+    clus_elems <- grep(paste0("clusters", cluster), design_elems)
+    
+    design_elems[clus_elems]
+    
+    samp_minus <- grep("samplesmall", design_elems[clus_elems], value = TRUE)
+    samp_plus <- grep("samplelarge", design_elems[clus_elems], value = TRUE)
+    
+    contrast[samp_minus] <- -1
+    # contrast["sampleEarly"] <- -1
+    contrast[samp_plus] <- 1
+    # contrast["sampleLate"] <- 1
+    
+    message(paste0("... Starting QLMFTest"))
+    ttime  <- system.time({
+        results <- glmQLFTest(fit, contrast = contrast)
+    })
+
+    message(paste0("... DONE", ttime[[3]]))
+    
+    tt <- topTags(results, n = Inf)
+    tt <- as.data.frame(tt)
+    tt$gene <- rownames(tt)
+    
+    readr::write_csv(tt, paste0("toptable_edger_cluster_", cluster, ".csv"))
+    
+    message(paste0("Plotting ", cluster))
+    labelled_points <- filter(tt, PValue < 0.001) %>% 
+        dplyr::top_n(15, abs(logFC))
+    
+    g <- ggplot(tt, aes(y = logFC, x = logCPM, label = gene)) +
+        geom_point() +
+        geom_point(colour = "red", data = labelled_points) +
+        ggrepel::geom_label_repel(data = labelled_points) + 
+        ggtitle(paste0("MAplot for cluster ", cluster), 
+                subtitle = paste0(
+                    samp_plus,
+                    " - ", 
+                    samp_minus))
+    
+    print(g)
+    
+    
+    cells_in_contrast <- (
+        (design[, samp_minus] != 0) |
+            (design[, samp_plus] != 0)
+        )
+    
+    tmp <- cpm(y)[labelled_points$gene, as.vector(cells_in_contrast)] %>% 
+        reshape2::melt() %>%
+        as.data.frame() %>%
+        mutate(logCPM = log1p(value))
+    
+    tmp$grouping <- plyr::mapvalues(
+        as.character(tmp$Var2), 
+        from = Cells(immune.combined), 
+        to = as.character(Idents(immune.combined)), 
+        warn_missing = FALSE)
+    
+    stopifnot(length(unique(tmp$grouping)) < 100)
+    
+    tmp$Gene <- tmp$Var1
+    
+    g <- ggplot(
+        tmp, aes(x = grouping, y = logCPM, 
+                 fill = grouping, colour = grouping)) + 
+        geom_jitter(alpha = 0.2, width = 0.3) +
+        facet_wrap(~Gene, labeller = label_both, 
+                   ncol = 5, strip.position = "left") + 
+        theme_bw()
+    print(g)
+    
+    g <- ggplot(
+        tmp, aes(x = grouping, y = logCPM, 
+                 fill = grouping)) + 
+        geom_violin(alpha = 0.8, width = 1, 
+                    draw_quantiles = 0.5) +
+        facet_wrap(~Gene, labeller = label_both, 
+                   ncol = 5, strip.position = "left") + 
+        theme_bw()
+    print(g)
+}
+
+
+```
+
+
+```{r eval=FALSE, fig.height=7, fig.width=12, include=FALSE}
+for (labelled_points in signif_tts) {
+    plots <- VlnPlot(immune.combined, 
+                 features = labelled_points$gene, 
+                 split.by = "Stage",
+                 idents = c(paste0(cluster, "_Early"),
+                            paste0(cluster, "_Late")), 
+                 group.by = last_snn, 
+                 pt.size = 0, size.title.use = 10, size.x.use = 6, 
+                 combine = FALSE, log = FALSE)
+
+    print(CombinePlots(plots = plots, ncol = 5, legend = 'right'))
+}
+
+```
+
+
+```{r}
+tmp <- cpm(y)[c("IGHG2", "IGLC2"), ] %>% 
+    reshape2::melt() %>%
+    as.data.frame() %>%
+    mutate(logCPM = log1p(value))
+
+tmp$cluster <- plyr::mapvalues(
+    as.character(tmp$Var2), 
+    from = Cells(immune.combined), 
+    to = as.character(immune.combined@meta.data[[last_snn]]), 
+    warn_missing = FALSE)
+
+tmp$stage <- plyr::mapvalues(
+    as.character(tmp$Var2), 
+    from = Cells(immune.combined), 
+    to = as.character(immune.combined@meta.data$Stage), 
+    warn_missing = FALSE)
+
+stopifnot(length(unique(tmp$grouping)) < 100)
+
+tmp$Gene <- tmp$Var1
+
+g <- ggplot(
+      tmp, aes(x = stage, y = logCPM, 
+               fill = cluster, group = interaction(stage, cluster))) + 
+      geom_violin(alpha = 0.8, width = 1, 
+                  draw_quantiles = 0.5) +
+      facet_wrap(~Gene, labeller = label_both, 
+                 ncol = 5, strip.position = "left") + 
+      theme_bw()
+print(g)
+
+# y$samples
+# plotMDS(y, col=rep(1:2, each=3))
+```
+
+
+```{r}
+sessionInfo()
+```
