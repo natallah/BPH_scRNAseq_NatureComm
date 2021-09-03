@@ -1,0 +1,400 @@
+---
+title: "Preprocessing, QC and Individual Sample Clustering"
+date: "`r Sys.Date()`"
+author: Nadia A. Lanman
+params:
+  num_dimensions_use: 15
+  num_var_features: 3000
+  numfeatures_max: 5000
+  numfeatures_min: 300
+  percent_mito_max: 22
+  project_name: 009
+  resolution: 0.4
+  hd5_file: 1196/outs/filtered_feature_bc_matrix.h5
+  out_dir: rmarkdown/
+output:
+  html_document:
+    toc: true
+    highlight: kate
+    keep_md: yes
+---
+
+
+```{r knitr_init, echo=FALSE, cache=FALSE}
+library(knitr)
+library(rmdformats)
+
+## Global options
+options(max.print="75")
+opts_chunk$set(echo=TRUE,
+	             cache=FALSE,
+               prompt=FALSE,
+               tidy=TRUE,
+               comment=NA,
+               message=TRUE,
+               warning=TRUE)
+opts_knit$set(width=75)
+```
+
+```{r}
+
+
+parameters <- params
+print(params)
+
+```
+
+```{r}
+library(Seurat)
+library(sctree)
+library(tidyverse)
+library(purrr)
+library(Seurat)
+library(dplyr)
+
+set.seed(42)
+```
+
+```{r}
+data <- Read10X(data.dir = params_table$in_dir[1])
+rownames(x = data[["Antibody Capture"]]) <- gsub(pattern = "_[control_]*TotalSeqB", replacement = "", x = rownames(x = data[["Antibody Capture"]]))
+seurat.obj <- CreateSeuratObject(counts = data[["Gene Expression"]], parameters[["project_name_seurat"]])
+```
+
+
+```{r}
+seurat.obj
+```
+
+## Quality Control Plots
+
+```{r qcplots}
+seurat.obj[["percent.mt"]] <- PercentageFeatureSet(
+  seurat.obj, 
+  pattern = "^MT-")
+
+VlnPlot(
+  seurat.obj,
+  features = c("nFeature_RNA", "nCount_RNA", "percent.mt"),
+  ncol = 3) 
+
+FeatureScatter(
+  seurat.obj, 
+  feature1 = "percent.mt",
+  feature2 = "nFeature_RNA") + 
+    scale_y_log10() +
+    scale_x_log10() +
+  geom_hline(yintercept = parameters[["numfeatures_min"]]) +
+  geom_hline(yintercept = parameters[["numfeatures_max"]]) +
+  geom_vline(xintercept = parameters[["percent_mito_max"]])
+
+
+FeatureScatter(
+  seurat.obj, 
+  feature1 = "nCount_RNA",
+  feature2 = "nFeature_RNA") + 
+    scale_y_log10() +
+    scale_x_log10() +
+  geom_hline(yintercept = parameters[["numfeatures_min"]]) +
+  geom_hline(yintercept = parameters[["numfeatures_max"]]) 
+
+
+FeatureScatter(
+  seurat.obj, 
+  feature1 = "percent.mt",
+  feature2 = "nFeature_RNA") + 
+    scale_y_log10() +
+    scale_x_log10()
+
+qplot(
+  y = log2(seurat.obj@meta.data$nCount_RNA), 
+  x = rank(log2(seurat.obj@meta.data$nCount_RNA)),ylab="log2(Counts)",xlab="rank of log2(Counts)") 
+
+qplot(
+  y = log2(seurat.obj@meta.data$nFeature_RNA), 
+  x = rank(log2(seurat.obj@meta.data$nFeature_RNA))) +
+  geom_hline(yintercept = log2(parameters[["numfeatures_min"]])) +
+  geom_hline(yintercept = log2(parameters[["numfeatures_max"]]))
+
+qplot(
+  y = log2(seurat.obj@meta.data$percent.mt), 
+  x = rank(log2(seurat.obj@meta.data$percent.mt))) +
+  geom_hline(yintercept = log2(parameters[["percent_mito_max"]]))
+
+subset_formula <-  glue::glue("nFeature_RNA > {parameters[[\"numfeatures_min\"]]} & 
+    nFeature_RNA < {parameters[[\"numfeatures_max\"]]} &
+    percent.mt < {parameters[[\"percent_mito_max\"]]}")
+
+	
+cells_keep <- Seurat:::WhichCells.Seurat(
+  seurat.obj, cells = Cells(seurat.obj),
+  idents = Idents(seurat.obj), expression = subset_formula)
+
+#Normalization, scaling, and clustering is performed as usual on the gene expression data
+seurat.obj <- NormalizeData(seurat.obj)
+
+#for normalization of CITE-seq data, the typical LogNormalization is not suggested, but instead we use a centered log-ratio (CLR) normalization, which is computed independently for each feature
+seurat.obj[["ADT"]] <- CreateAssayObject(data[["Antibody Capture"]][, colnames(x = seurat.obj)])
+seurat.obj <- NormalizeData(seurat.obj, assay = "ADT", normalization.method = "CLR")
+seurat.obj <- ScaleData(seurat.obj, assay = "ADT")
+
+#pearson correlation between the two features is shown above plots
+plot1 <- FeatureScatter(seurat.obj, feature1 = "adt_CD19", feature2 = "adt_CD3", pt.size = 1)
+plot2 <- FeatureScatter(seurat.obj, feature1 = "adt_CD4", feature2 = "adt_CD8a", pt.size = 1)
+plot3 <- FeatureScatter(seurat.obj, feature1 = "adt_CD279", feature2 = "adt_CD11b", pt.size = 1)
+CombinePlots(plots = list(plot1, plot2, plot3), ncol = 3, legend = "none")
+
+seurat.obj <- FindVariableFeatures(
+  seurat.obj, 
+  selection.method = "vst",
+  nfeatures = parameters[["num_var_features"]])
+
+# Identify the 10 most highly variable genes
+top10 <- head(VariableFeatures(seurat.obj), 10)
+
+# plot variable features with and without labels
+plot1 <- VariableFeaturePlot(seurat.obj)
+plot1
+LabelPoints(plot = plot1, points = top10, repel = TRUE)
+
+```
+
+## Perform Dimensionality Reduction and Clustering based on RNA expression
+
+```{r pca}
+all.genes <- rownames(seurat.obj)
+seurat.obj <- ScaleData(seurat.obj, features = all.genes)
+seurat.obj <- RunPCA(
+  seurat.obj,
+  features = VariableFeatures(object = seurat.obj))
+
+print(seurat.obj[["pca"]], dims = 1:5, nfeatures = 5)
+VizDimLoadings(seurat.obj, dims = 1:2, reduction = "pca")
+
+ElbowPlot(seurat.obj)
+```
+
+
+```{r findclusters}
+DimPlot(seurat.obj, reduction = "pca")
+
+seurat.obj <- FindNeighbors(
+  seurat.obj,
+  dims = 1:parameters[["num_dimensions_use"]])
+
+seurat.obj <- FindClusters(
+  seurat.obj, 
+  resolution = parameters[["resolution"]])
+```
+
+```{r umap}
+seurat.obj <- RunUMAP(
+  seurat.obj, 
+  dims = 1:parameters[["num_dimensions_use"]])
+
+DimPlot(
+  seurat.obj,
+  reduction = "umap")
+```
+
+```{r fig.height=8, fig.width=8}
+DimPlot(seurat.obj, reduction = "umap", label = TRUE, label.size = 8)
+```
+
+
+```{r cacheobject}
+rds_final_name <- paste0(
+    parameters[["project_name"]],
+    "_Seurat_obj.RDS")
+
+saveRDS(
+  seurat.obj, 
+  file = rds_final_name)
+
+Sys.chmod(paths = rds_final_name, mode = "0444")
+```
+
+## Visualize protein levels on top of the clustering based on RNA expression
+
+#### Protein expression
+```{r}
+
+FeaturePlot(seurat.obj, features = c("adt_CD3", "adt_CD19", "adt_CD4", "adt_CD8a","adt_CD279","adt_CD11b"),min.cutoff = "q05", max.cutoff="q95", ncol = 2)
+```
+
+#### RNA expression
+
+```{r}
+#RNA levels
+FeaturePlot(seurat.obj, features = c("CD3E", "CD19", "CD4", "CD8A", "PDCD1","ITGAM"), min.cutoff = "q05", max.cutoff="q95", ncol = 2)
+```
+
+## Visualize protein expression in clusters
+
+```{r}
+#Ridge Plots of Protein levels
+RidgePlot(seurat.obj, features = "adt_CD3")
+RidgePlot(seurat.obj, features = "adt_CD19")
+RidgePlot(seurat.obj, features = "adt_CD4")
+RidgePlot(seurat.obj, features = "adt_CD8a")
+RidgePlot(seurat.obj, features = "adt_CD279")
+RidgePlot(seurat.obj, features = "adt_CD11b")
+                                                
+# Draw ADT scatter plots (like biaxial plots for FACS).
+FeatureScatter(seurat.obj, feature1 = "adt_CD19", feature2 = "adt_CD3")
+FeatureScatter(seurat.obj, feature1 = "adt_CD4", feature2 = "adt_CD8a")
+FeatureScatter(seurat.obj, feature1 = "adt_CD279", feature2 = "adt_CD11b")
+```
+
+## Identify marker genes (genes that differ between clusters)
+
+```{r findmarkers}
+#identify differentially expressed genes between clusters
+seurat.obj.markers <- FindAllMarkers(
+  seurat.obj, 
+  only.pos = TRUE, 
+  min.pct = 0.25, 
+  logfc.threshold = 0.25)
+
+write.csv(
+  seurat.obj.markers, 
+  file = paste0(
+      parameters[["out_dir"]], 
+      parameters[["project_name"]],
+      "_markers.csv"),
+  row.names = FALSE)
+
+split(seurat.obj.markers, seurat.obj.markers$cluster) %>% {
+  purrr::map2(., names(.), function(cluster_table, cluster_name) {
+    table_name <- paste0(
+        "cluster_", cluster_name,
+        "_", parameters[["project_name"]],
+        "_markers.csv")
+
+    message(table_name)
+    
+    write.csv(
+      cluster_table, 
+      file = table_name,
+      row.names = FALSE)
+    
+    #Sys.chmod(paths = table_name, mode = "0444")
+  })
+}
+
+
+seurat.obj.markers %>% group_by(cluster) %>% dplyr::top_n(n = 2, wt = avg_logFC)
+```
+
+```{r fig.height=6, fig.width=14}
+seurat.obj.markers %>% 
+    group_by(cluster) %>% 
+    dplyr::top_n(n = 4, wt = avg_logFC) %>% 
+    .$gene %>% unique() %>%
+
+DotPlot(seurat.obj, features = .) + Seurat::RotatedAxis()
+```
+
+```{r fig.height=6, fig.width=14}
+foo <- sctree::FindAllMarkers_ranger.Seurat(seurat.obj, VariableFeatures(seurat.obj))
+head(foo)
+foo %>% 
+    group_by(cluster) %>% 
+    dplyr::top_n(n = 4, wt = importance) %>% 
+    .$gene %>% unique() %>%
+  DotPlot(seurat.obj, features = .) + Seurat::RotatedAxis()
+```
+
+
+```{r}
+length(Cells(seurat.obj))
+length(unique(Idents(seurat.obj)))
+```
+
+## Identify differentially expressed proteins between clusters
+
+```{r}
+#identify differentially expressed proteins between clusters
+# Downsample the clusters to a maximum of 300 cells each (makes the heatmap easier to see for
+# small clusters)
+seurat.small <- subset(seurat.obj, downsample = 300)
+
+# Find protein markers for all clusters, and draw a heatmap
+adt.markers <- FindAllMarkers(seurat.small, assay = "ADT", only.pos = TRUE)
+adt.markers
+```
+
+## Heatmap of protein markers in clusters
+
+```{r}
+write.csv(adt.markers,file=paste0(parameters$project_name,"_proteinMarkers.csv"))
+DoHeatmap(seurat.small, features = unique(adt.markers$gene), assay = "ADT", angle = 90) + NoLegend()
+```
+
+## Cluster directly on protein levels using a Euclidan distance matrix
+
+```{r}
+#cluster directly on protein levels
+adt.obj <- seurat.obj
+DefaultAssay(adt.obj) <- "ADT"
+adt.obj <- RunPCA(adt.obj, features = rownames(adt.obj), reduction.name = "pca_adt", reduction.key = "pca_adt_", 
+    verbose = FALSE)
+DimPlot(adt.obj, reduction = "pca_adt")
+
+# Since we only have 6 markers, instead of doing PCA, we'll just use a standard euclidean
+# distance matrix here.  Also, this provides a good opportunity to demonstrate how to do
+# visualization and clustering using a custom distance matrix in Seurat
+adt.data <- GetAssayData(adt.obj, slot = "data")
+adt.dist <- dist(t(adt.data))
+adt.obj[["rnaClusterID"]] <- Idents(adt.obj)
+
+adt.obj[["tsne_adt"]] <- RunTSNE(adt.dist, assay = "ADT", reduction.key = "adtTSNE_")
+adt.obj[["adt_snn"]] <- FindNeighbors(adt.dist)$snn
+adt.obj <- FindClusters(adt.obj, resolution = 0.2, graph.name = "adt_snn")
+```
+
+## Clustering based on protein distance matrix
+
+```{r}
+# We can compare the RNA and protein clustering, and use this to annotate the protein clustering
+# (we could also of course use FindMarkers)
+clustering.table <- table(Idents(adt.obj), adt.obj$rnaClusterID)
+clustering.table
+
+tsne_rnaClusters <- DimPlot(adt.obj, reduction = "tsne_adt", group.by = "rnaClusterID") + NoLegend()
+tsne_rnaClusters <- tsne_rnaClusters + ggtitle("Clustering based on scRNA-seq") + theme(plot.title = element_text(hjust = 0.5))
+tsne_rnaClusters <- LabelClusters(plot = tsne_rnaClusters, id = "rnaClusterID", size = 4)
+
+tsne_adtClusters <- DimPlot(adt.obj, reduction = "tsne_adt", pt.size = 0.5) + NoLegend()
+tsne_adtClusters <- tsne_adtClusters + ggtitle("Clustering based on ADT signal") + theme(plot.title = element_text(hjust = 0.5))
+tsne_adtClusters <- LabelClusters(plot = tsne_adtClusters, id = "ident", size = 4)
+
+# Note: for this comparison, both the RNA and protein clustering are visualized on a tSNE
+# generated using the ADT distance matrix.
+CombinePlots(plots = list(tsne_rnaClusters, tsne_adtClusters), ncol = 2)
+```
+
+## Clustering based on RNA distance matrix
+
+```{r}
+#now generate the plots based on RNA distance matrix and color based on RNA and ADT
+seurat.obj[["rnaClusterID"]] <- Idents(seurat.obj)
+umap.rna <- DimPlot(seurat.obj, group.by = "rnaClusterID",
+  reduction = "umap")
+umap_rnaClusters <- umap.rna + ggtitle("Clustering based on scRNA-seq") + theme(plot.title = element_text(hjust = 0.5))
+umap_rnaClusters <- LabelClusters(plot = umap_rnaClusters, id = "rnaClusterID", size = 4)
+seurat.obj[["adtClusterID"]] <- Idents(adt.obj)
+umap.adt <- DimPlot(seurat.obj, group.by = "adtClusterID",
+  reduction = "umap")
+umap_adtClusters <- umap.adt + ggtitle("Clustering based on ADT signal") + theme(plot.title = element_text(hjust = 0.5))
+umap_adtClusters <- LabelClusters(plot = umap_adtClusters, id = "adtClusterID", size = 4)
+
+CombinePlots(plots = list(umap_rnaClusters, umap_adtClusters), ncol = 2)
+
+saveRDS(adt.obj, file = paste0(parameters$project_name,"_multimodal.rds"))
+
+```
+
+```{r}
+sessionInfo()
+```
