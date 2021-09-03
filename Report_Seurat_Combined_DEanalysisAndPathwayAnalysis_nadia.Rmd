@@ -1,0 +1,1112 @@
+---
+title: "Combined Clustering Visualization"
+date: "`r Sys.Date()`"
+author: Nadia A. Lanman
+params:
+  num_dimensions_use: 18
+  num_var_features: 3000
+  numfeatures_max: 10000
+  numfeatures_min: 500
+  percent_mito_max: 22
+  project_name: 009
+  resolution: 0.2
+  hd5_file: 1196/outs/filtered_feature_bc_matrix.h5
+  out_dir: rmarkdown/
+output:
+  html_document:
+    toc: true
+    highlight: kate
+    keep_md: yes
+---
+
+```{r knitr_init, echo=FALSE, cache=FALSE}
+library(knitr)
+library(rmdformats)
+
+## Global options
+options(max.print="75")
+opts_chunk$set(echo=TRUE,
+	             cache=FALSE,
+               prompt=FALSE,
+               tidy=TRUE,
+               comment=NA,
+               message=TRUE,
+               warning=TRUE)
+opts_knit$set(width=75)
+```
+
+```{r}
+# devtools::install_github("thomasp85/ggforce")
+# install.packages("isoband")
+
+library(Seurat)
+library(tidyverse)
+library(ggforce)
+library(ComplexHeatmap)
+library(ggrepel)
+```
+
+
+```{r}
+seurat_obj <- readRDS("../step1_cellRangerCounts/cellranger_seurat/combinedOct14/combined_seurat.RDS")
+
+seurat_obj <- FindClusters(seurat_obj, resolution = 0.2)
+
+```
+
+## mRNA-seq Clustering Visualization
+
+### UMAP colored by cluster
+
+```{r mRNA clustering}
+DimPlot(seurat_obj)
+```
+### UMAP colored by sample type
+```{r mRNA clustering}
+seurat_obj@meta.data[["Subtype"]] <- gsub(".*_(.*)", "\\1", seurat_obj@meta.data$Sample)
+typeumap <- DimPlot(seurat_obj, reduction = "umap", group.by = "Subtype")
+
+#cell cycle correct score as a proxy for proliferation
+s.genes <- cc.genes$s.genes
+g2m.genes <- cc.genes$g2m.genes
+all.cc <- as.character(cc.genes)
+
+seurat.cc <- MetaFeature(seurat.cc,features=all.cc)
+seurat.cc@meta.data$metaG2M <- seurat.cc@meta.data$metafeature 
+seurat.cc <- MetaFeature(seurat.cc,features=c("CHAF1B","BRIP1","E2F8","EXO1","TIPIN","DSCC1","BLM","CASP8AP2",
+                                              "USP1","CLSPN","POLA1","MCM5","PCNA","TYMS","FEN1","MCM2","MCM4",
+                                              "UBR7","POLD3","MSH2","ATAD2","RAD51","RRM2","CDC45","CDC6",
+                                              "RFC2","RPA2","NASP","RAD51AP1","GMNN", "WDR76","SLBP","CCNE2",
+                                              "RRM1","UNG","GINS2","MCM6","CDCA7","DTL","PRIM1","UHRF1","HELLS",g2m.genes))
+
+RidgePlot(seurat.cc,features=c("PCNA", "TOP2A","MCM6","MKI676"))
+
+seurat.cc$CC.total <- seurat.cc$S.Score+seurat.cc$G2M.Score
+seurat.cc$log.CC.total <- log(seurat.cc$S.Score+seurat.cc$G2M.Score)
+
+seurat.cc@meta.data$log.CC.total.noNA <- seurat.cc@meta.data$log.CC.total
+seurat.cc@meta.data$log.CC.total.noNA[is.na(seurat.cc@meta.data$log.CC.total.noNA)] <- 0
+
+png(filename="LogTotal.Score_UMAP_red_splitType.png",units="in",height=8,width=20,res=300)
+FeaturePlot(seurat.cc, features="log.CC.total", cols = c("white","light grey", "red"),split.by = "Subtype")
+dev.off()
+
+png(filename="Meta.allCC.Score_UMAP.png",units="in",height=8,width=10,res=300)
+FeaturePlot(seurat.cc, features="metafeature")
+dev.off()
+
+png(filename="MetaG2M.Score_UMAP.png",units="in",height=8,width=10,res=300)
+FeaturePlot(seurat.cc, features="G2M.Score")
+dev.off()
+
+png(filename="G2M.Score_UMAP.png",units="in",height=8,width=10,res=300)
+FeaturePlot(seurat.cc, features="G2M.Score")
+dev.off()
+
+png(filename="S.Score_UMAP.png",units="in",height=8,width=10,res=300)
+FeaturePlot(seurat.cc, features="S.Score")
+dev.off()
+
+png(filename="Ki67_UMAP.png",units="in",height=8,width=10,res=300)
+FeaturePlot(seurat.cc, features="MKI67")
+dev.off()
+
+png(filename="PCNA_UMAP.png",units="in",height=8,width=10,res=300)
+FeaturePlot(seurat_obj, features="PCNA")
+dev.off()
+
+png(filename="MCM_UMAP.png",units="in",height=8,width=10,res=300)
+FeaturePlot(seurat.cc, features=c("MCM2","MCM3","MCM4","MCM5","MCM6","MCM7"),cols = 1)
+dev.off()
+
+DefaultAssay(object = seurat.cc) <- "RNA"
+FeaturePlot(seurat_obj, features="MCM3",cols = 1)
+
+
+seurat.cc <- NormalizeData(seurat_obj)
+seurat.cc <- CellCycleScoring(seurat_obj, s.features = s.genes, g2m.features = g2m.genes)
+ggplot2::ggsave(filename="combined_umap_sample.png", plot= typeumap,units="in",height=8,width=10)
+
+splitypeumap <-DimPlot(seurat_obj, reduction = "umap", split.by = "Subtype")
+ggplot2::ggsave(filename="combined_umap_split.png",plot= splitypeumap,units="in",height= 5, width = 10)
+
+#export for Yuan
+meta <- seurat_obj@meta.data
+all.genes <- rownames(seurat_obj)
+#export relative counts (CPM)
+seurat_obj <- NormalizeData(seurat_obj,assay="RNA",  normalization.method="RC",scale.factor=10000)
+
+#split by sample
+split.seurat <- SplitObject(seurat_obj,split.by = "Sample")
+unique(seurat_obj$Sample)
+small.003mat <- as.matrix(split.seurat$`003_small`@assays$RNA@data)
+small.004mat <- as.matrix(split.seurat$`004_small`@assays$RNA@data)
+small.007mat <- as.matrix(split.seurat$`007_small`@assays$RNA@data)
+small.006mat <- as.matrix(split.seurat$`006_small`@assays$RNA@data)
+small.008mat <- as.matrix(split.seurat$`008_small`@assays$RNA@data)
+small.009mat <- as.matrix(split.seurat$`009_small`@assays$RNA@data)
+small.010mat <- as.matrix(split.seurat$`010_small`@assays$RNA@data)
+small.013mat <- as.matrix(split.seurat$`013_small`@assays$RNA@data)
+small.1144mat <- as.matrix(split.seurat$`1144_small`@assays$RNA@data)
+small.1196mat <- as.matrix(split.seurat$`1196_small`@assays$RNA@data)
+large.012mat <- as.matrix(split.seurat$`012_large`@assays$RNA@data)
+large.1157mat <- as.matrix(split.seurat$`1157_large`@assays$RNA@data)
+large.1195mat <- as.matrix(split.seurat$`1195_large`@assays$RNA@data)
+large.766mat <- as.matrix(split.seurat$`766_large`@assays$RNA@data)
+
+#export as .RDSs
+saveRDS(small.003mat,small.004mat,small.007mat,small.006mat,small.008mat,small.009mat,small.010mat,
+        small.013mat,small.1144mat,small.1196mat,large.012mat,large.1157mat,large.1195mat,large.766mat,meta, file="Yuan_Oct17_combinedClustering.rds")
+
+```
+
+### UMAP colored by dataset
+```{r mRNA clustering}
+DimPlot(seurat_obj, reduction = "umap", group.by = "orig.ident")
+```
+
+## Identify up and down-regulated markers
+ 
+```{r find markers}
+all.markers <- FindAllMarkers(seurat_obj)
+
+write.csv(
+  all.markers, 
+  file = paste0(
+      parameters[["out_dir"]],
+      "combined_markers.csv"),
+  row.names = FALSE)
+
+split(all.markers, all.markers$cluster) %>% {
+  purrr::map2(., names(.), function(cluster_table, cluster_name) {
+    table_name <- paste0(
+        "cluster_", cluster_name,
+        "_","combined_markers.csv")
+
+    message(table_name)
+    
+    write.csv(
+      cluster_table, 
+      file = table_name,
+      row.names = FALSE)
+    
+    #Sys.chmod(paths = table_name, mode = "0444")
+  })
+}
+
+top10 <- all.markers %>% group_by(cluster) %>% top_n(n=10, wt=avg_logFC)
+```
+
+## Plots of markers
+```{r fig.height=6, fig.width=14}
+all.markers %>% 
+    group_by(cluster) %>% 
+    dplyr::top_n(n = 4, wt = avg_logFC) %>% 
+    .$gene %>% unique() %>%
+
+DotPlot(seurat_obj, features = .) + Seurat::RotatedAxis()
+```
+
+```{r fig.height=8, fig.width=14}
+top5 <- all.markers %>% group_by(cluster) %>% top_n(n=5, wt=avg_logFC)
+plot <- DoHeatmap(seurat_obj, features=top5$gene) + NoLegend()
+ggplot2::ggsave(filename="combined_heatmap_top5.pdf", plot= plot,units="in",height=8,width=20)
+```
+
+## Identify differentially expressed proteins between clusters
+
+```{r}
+#for normalization of CITE-seq data, the typical LogNormalization is not suggested, but instead we use a centered log-ratio (CLR) normalization, which is computed independently for each feature
+
+seurat_obj <- NormalizeData(seurat_obj, assay = "ADT", normalization.method = "CLR")
+seurat_obj <- ScaleData(seurat_obj, assay = "ADT")
+
+citeseq_markers <- paste0(seurat_obj@assays$ADT@key, rownames(seurat_obj@assays$ADT@data))
+# [1] "ADT_CD3"   "ADT_CD11b" "ADT_CD8a"  "ADT_CD19"  "ADT_CD279"
+# [6] "ADT_CD4"  
+
+```
+
+## Visualize protein expression in clusters
+
+
+
+#identify differentially expressed proteins between clusters
+# Downsample the clusters to a maximum of 300 cells each (makes the heatmap easier to see for
+# small clusters)
+```{r}
+seurat.small <- subset(seurat_obj,downsample = 300)
+
+# Find protein markers for all clusters, and draw a heatmap
+adt.markers <- FindAllMarkers(seurat.small, assay = "ADT", only.pos = TRUE)
+adt.markers
+```
+
+## Heatmap of protein markers in clusters
+
+```{r}
+write.csv(adt.markers,file=paste0("combined_proteinMarkers.csv"))
+DoHeatmap(seurat.small, features = unique(adt.markers$gene), assay = "ADT", angle = 90) + NoLegend()
+```
+
+
+```{r fig.width=10, fig.height=6}
+citeseq_data_samples <- c(
+"012_large",
+"013_small",
+"1144_small",
+"1157_large",
+"1196_small",
+"1195_large"
+)
+
+citeseq_cells <- rownames(seurat_obj[["Sample"]])[
+    seurat_obj[["Sample"]][["Sample"]] %in% citeseq_data_samples]
+
+head(citeseq_cells)
+
+seurat.adt <- WhichCells(seurat_obj, cells=citeseq_cells)
+seurat.adt[["ADT"]] <- CreateAssayObject(data[["Antibody Capture"]][, colnames(x = seurat.adt)])
+
+g <- FeaturePlot(
+  seurat_obj, citeseq_markers, cells = citeseq_cells,
+  order = TRUE,
+  cols = viridis::viridis(2, direction = -1))
+
+ggsave(plot = g, "umap_citeseq_clusters.png", width = 10, height = 8)
+
+g <- FeaturePlot(
+  seurat_obj, citeseq_markers, cells = citeseq_cells,
+  order = TRUE,
+  cols = viridis::viridis(7, direction = -1))
+ggsave(plot = g, "2umap_citeseq_clusters.png", width = 10, height = 8)
+
+g <- FeaturePlot(
+  seurat_obj, citeseq_markers, cells = citeseq_cells,
+  order = TRUE,
+  cols = viridis::viridis(7, direction = -1), split.by = "Sample")
+ggsave(plot = g, "split_2umap_citeseq_clusters.png", width = 8, height = 12)
+
+head(seurat_obj@meta.data)
+unique(seurat_obj@meta.data$Sample)
+
+add_noise <- function(x) {
+ return(x + runif(length(x), min = -0.1, max = 0.1))
+}
+
+g <- {
+FetchData(seurat_obj, c(citeseq_markers, "ident"), cells = citeseq_cells) %>%
+  sample_frac(1) %>%
+  mutate_if(is.numeric, add_noise) %>%
+  ggplot(aes(colour = ident, fill = ident, group = ident)) +
+    geom_autodensity(alpha = 0.3) +
+    geom_density2d(aes(x = .panel_x, y = .panel_y), alpha = 0.5) + 
+    facet_matrix(vars(-ident), layer.upper = 2, layer.diag = 1) + theme_bw()
+}
+
+ggsave(plot = g, "facet_citeseq_clusters.png", width = 12, height = 12)
+```
+
+
+##look at correlation of protein markers
+###pearson correlation between the two features is shown above plots
+```{r protein correlation}
+
+plot1 <- FeatureScatter(seurat_obj, feature1 = "ADT_CD19", feature2 = "ADT_CD3", pt.size = 1)
+plot2 <- FeatureScatter(seurat_obj, feature1 = "adt_CD4", feature2 = "adt_CD8a", pt.size = 1)
+plot3 <- FeatureScatter(seurat_obj, feature1 = "adt_CD279", feature2 = "adt_CD11b", pt.size = 1)
+CombinePlots(plots = list(plot1, plot2, plot3), ncol = 3, legend = "none")
+```
+
+```{r}
+#Ridge Plots of Protein levels
+r1 <- RidgePlot(seurat_obj, features = "CD3",assay = "ADT", cells=citeseq_cells)
+r2 <- RidgePlot(seurat_obj, features = "CD19",assay = "ADT", cells=citeseq_cells)
+r3 <- RidgePlot(seurat_obj, features = "CD4",assay = "ADT", cells=citeseq_cells)
+r4 <- RidgePlot(seurat_obj, features = "CD8a",assay = "ADT", cells=citeseq_cells)
+r5 <- RidgePlot(seurat_obj, features = "CD279",assay = "ADT", cells=citeseq_cells)
+r6 <- RidgePlot(seurat_obj, features = "CD11b",assay = "ADT", cells=citeseq_cells) 
+r.all <- CombinePlots(plots = list(r1, r2, r3, r4, r5, r6), ncol = 1, legend = "none")
+ggsave(plot = r.all, "combined_ridgePlot.png", width = 8, height = 18)
+# Draw ADT scatter plots (like biaxial plots for FACS).
+FeatureScatter(seurat.obj, feature1 = "adt_CD19", feature2 = "adt_CD3")
+FeatureScatter(seurat.obj, feature1 = "adt_CD4", feature2 = "adt_CD8a")
+FeatureScatter(seurat.obj, feature1 = "adt_CD279", feature2 = "adt_CD11b")
+```
+
+#### Protein expression
+```{r}
+
+featumap <- FeaturePlot(seurat_obj, features = c("ADT_CD3", "ADT_CD19", "ADT_CD4", "ADT_CD8a","ADT_CD279","ADT_CD11b"),min.cutoff = "q05", max.cutoff="q95", ncol = 2)
+ggsave(plot = featumap, "combined_ADT_featureUMAP.png", width = 14, height = 18)
+```
+
+
+```{r}
+png("cyteseq_cluster_heatmap.png")
+{
+FetchData(seurat_obj, c(citeseq_markers, "ident"), cells = citeseq_cells) %>%
+  group_by(ident) %>% 
+  summarise_each(function(x) {return(sum(x > 3) / length(x))}) %>%
+  {
+    ret <- .[,-1] %>% data.matrix()
+    rownames(ret) <- .[[1]]
+    return(ret)
+  } %>% Heatmap(name = "Percent Positive\n ( > 3)")
+}
+dev.off()
+```
+
+
+```{r}
+{
+FetchData(seurat_obj, c(citeseq_markers, "ident"), cells = citeseq_cells) %>%
+  group_by(ident) %>% 
+  summarise_each(function(x) {return(sum(x > 3) / length(x))}) %>%
+  {
+    ret <- .[,-1] %>% data.matrix()
+    rownames(ret) <- .[[1]]
+    return(ret)
+  } %>% {
+    return(. > 0.4) 
+  } %>% 
+  Heatmap(col = list("TRUE" = "#000000", "FALSE" = "#666666"))
+}
+
+get_positive <- function(.) {
+  { paste(names(.)[. > 0.4], "+", sep = "",collapse = "\n") }
+}
+
+positivity_df <- {
+FetchData(seurat_obj, c(citeseq_markers, "ident"), cells = citeseq_cells) %>%
+  group_by(ident) %>% 
+  summarise_each(function(x) {return(sum(x > 3) / length(x))}) %>% 
+  group_by(ident) %>% nest() %>% 
+  summarise(positivity = purrr::map(data, get_positive)) %>%
+  unnest(cols = c("positivity"))
+}
+
+positivity_df
+# # A tibble: 14 x 2
+#    ident positivity                                 
+#    <fct> <chr>                                      
+#  1 0     "ADT_CD11b+\nADT_CD4+"                     
+#  2 1     "ADT_CD3+\nADT_CD8a+\nADT_CD279+\nADT_CD4+"
+#  3 2     "ADT_CD3+\nADT_CD8a+\nADT_CD279+"          
+#  4 3     "ADT_CD3+\nADT_CD279+\nADT_CD4+"           
+#  5 4     "ADT_CD3+\nADT_CD8a+\nADT_CD279+"          
+#  6 5     +                                          
+#  7 6     ADT_CD19+                                  
+#  8 7     ADT_CD11b+                                 
+#  9 8     "ADT_CD3+\nADT_CD279+\nADT_CD4+"           
+# 10 9     "ADT_CD11b+\nADT_CD4+"                     
+# 11 10    ADT_CD19+                                  
+# 12 11    +                                          
+# 13 12    +                                          
+# 14 13    ADT_CD4+                                   
+
+combo_df[["positivity"]] <- plyr::mapvalues(
+    x = combo_df[["integrated_snn_res.0.2"]],
+    from = positivity_df[["ident"]],
+    to = positivity_df[["positivity"]]
+)
+
+medioid_df <- combo_df %>% select(matches("UMAP|integrated_snn_res.0.2|positivity")) %>% 
+  group_by(integrated_snn_res.0.2) %>% 
+  mutate(UMAP_1 = median(UMAP_1), UMAP_2 = median(UMAP_2)) %>%
+  summarise_each(unique)
+
+medioid_df
+# # A tibble: 14 x 4
+#    integrated_snn_res.0…  UMAP_1 UMAP_2 positivity                        
+#    <fct>                   <dbl>  <dbl> <fct>                             
+#  1 0                      -3.45  -11.5  "ADT_CD11b+\nADT_CD4+"            
+#  2 1                       1.05    2.62 "ADT_CD3+\nADT_CD8a+\nADT_CD279+\…
+#  3 2                       0.342   5.78 "ADT_CD3+\nADT_CD8a+\nADT_CD279+" 
+#  4 3                       4.88    5.76 "ADT_CD3+\nADT_CD279+\nADT_CD4+"  
+#  5 4                       0.699   9.51 "ADT_CD3+\nADT_CD8a+\nADT_CD279+" 
+#  6 5                     -14.8     2.39 +                                 
+#  7 6                      15.9    -5.76 ADT_CD19+                         
+#  8 7                      -4.34    8.01 ADT_CD11b+                        
+#  9 8                       7.46    2.16 "ADT_CD3+\nADT_CD279+\nADT_CD4+"  
+# 10 9                      -7.84   -8.49 "ADT_CD11b+\nADT_CD4+"            
+# 11 10                      6.75   -8.45 ADT_CD19+                         
+# 12 11                      1.73   -2.96 +                                 
+# 13 12                      7.90  -15.6  +                                 
+# 14 13                      4.41  -10.4  ADT_CD4+                          
+
+{
+ggplot(combo_df, aes(x = UMAP_1, y = UMAP_2, colour = integrated_snn_res.0.2)) + 
+  geom_point() +
+  geom_label(data = medioid_df, aes(label = positivity)) +  theme_bw()
+}
+```
+
+```{r}
+FeaturePlot(seurat_obj, "KIT", col = viridis::viridis(7, direction = -1), label = TRUE)
+FeaturePlot(seurat_obj, "GZMB", col = viridis::viridis(7, direction = -1), label = TRUE)
+FeaturePlot(seurat_obj, "JCHAIN", col = viridis::viridis(7, direction = -1), label = TRUE)
+
+gen_markers_0_vs_9 <- FindMarkers(seurat_obj, ident.1 = "0", ident.2 = "9", grouping.var = "Sample")
+
+markers_0_vs_9 <- FindConservedMarkers(seurat_obj, ident.1 = "0", ident.2 = "9", grouping.var = "Sample")
+
+head(markers_0_vs_9)
+
+g <- {
+  (gen_markers_0_vs_9) %>% {
+      .$gene <- rownames(.)
+      return(as_tibble(.))
+  } %>% filter(p_val_adj < 0.05, gene %in% rownames(markers_0_vs_9)) %>%
+    ggplot(aes(x = rank(avg_logFC), y = avg_logFC, label = gene)) +
+    geom_point() +
+    ggtitle("Cluster 0 vs Cluster 9") +
+    geom_label_repel(max.iter = 10000) + 
+    theme_bw()
+}
+
+
+
+ggsave(plot = g, "markers_0_vs_9.png", height = 8, width = 14)
+
+{
+(gen_markers_0_vs_9) %>% {
+    .$gene <- rownames(.)
+    return(as_tibble(.))
+} %>% filter(p_val_adj < 0.05, gene %in% rownames(markers_0_vs_9)) %>% 
+  arrange(avg_logFC) %>% 
+{ rbind(head(.), tail(.)) } %>%
+.[["gene"]] %>%
+FeaturePlot(seurat_obj, ., col = viridis::viridis(7, direction = -1))
+}
+
+```
+
+```{r}
+
+gen_markers_3_vs_8 <- FindMarkers(seurat_obj, ident.1 = "3", ident.2 = "8", grouping.var = "Sample")
+
+markers_3_vs_8 <- FindConservedMarkers(seurat_obj, ident.1 = "3", ident.2 = "8", grouping.var = "Sample")
+
+head(markers_3_vs_8)
+
+g <- {
+  (gen_markers_3_vs_8) %>% {
+      .$gene <- rownames(.)
+      return(as_tibble(.))
+  } %>% filter(p_val_adj < 0.05, gene %in% rownames(markers_3_vs_8)) %>%
+    ggplot(aes(x = rank(avg_logFC), y = avg_logFC, label = gene)) +
+    geom_point() +
+    ggtitle("Cluster 3 vs Cluster 8") +
+    geom_label_repel(max.iter = 10000) + 
+    theme_bw()
+}
+
+ggsave(plot = g, "markers_3_vs_8.png", height = 8, width = 14)
+
+# find_genedesc <- function(x) {
+#   AnnotationDbi::select(
+#     org.Hs.eg.db::org.Hs.eg.db,
+#     columns = "GENENAME", keys = x, 
+#     keytype = "ALIAS") %>% 
+#   group_by("ALIAS") %>% 
+#   nest() %>% {
+#     .$GENENAME <- purrr::map_chr(.$data, ~ paste(.x[["GENENAME"]], collapse = ", ")) 
+#     return(.)
+#   } %>%
+#   .[["GENENAME"]]
+# }
+# 
+# 
+#   (gen_markers_3_vs_8) %>% {
+#       .$gene <- rownames(.)
+#       return(as_tibble(.))
+#   } %>% filter(p_val_adj < 0.05, gene %in% rownames(markers_3_vs_8)) %>% {
+#     purrr::map(.$gene, purrr::safely(find_genedesc))
+#   }
+# 
+# g <- {
+#   (gen_markers_3_vs_8) %>% {
+#       .$gene <- rownames(.)
+#       return(as_tibble(.))
+#   } %>% filter(p_val_adj < 0.05, gene %in% rownames(markers_3_vs_8)) %>%
+#     mutate(gene = purrr::map_chr(gene,find_genedesc)) %>%
+#     ggplot(aes(x = rank(avg_logFC), y = avg_logFC, label = gene)) +
+#     geom_point() +
+#     ggtitle("Cluster 3 vs Cluster 8") +
+#     geom_label_repel(max.iter = 10000) + 
+#     theme_bw()
+# }
+# 
+# ggsave(plot = g, "longname_markers_3_vs_8.png", height = 8, width = 14)
+
+{
+(gen_markers_3_vs_8) %>% {
+    .$gene <- rownames(.)
+    return(as_tibble(.))
+} %>% filter(p_val_adj < 3.35, gene %in% rownames(markers_3_vs_8)) %>% 
+  arrange(avg_logFC) %>% 
+{ rbind(head(.), tail(.)) } %>%
+.[["gene"]] %>%
+FeaturePlot(seurat_obj, ., col = viridis::viridis(7, direction = -1))
+}
+```
+
+
+```{r}
+
+dir("./cellranger_seurat/combined/")
+# [1] "combined_seurat.RDS"              "combined_umap.png"               
+# [3] "list_markers_sctree_combined.RDS" "list_markers_seurat_combined.RDS"
+# [5] "list_seurat.RDS"                  "resolution_tests.png"            
+markers <- readRDS("./cellranger_seurat/combined/list_markers_seurat_combined.RDS")
+markers2 <- readRDS("./cellranger_seurat/combined/list_markers_sctree_combined.RDS")
+markers2 %>% filter(cluster %in% c(11,12,13)) %>% group_by(cluster) %>% top_n(10, importance)
+
+markers[c("11", "12", "13")]
+markers[["11"]] %>% rownames() %>%
+  FeaturePlot(seurat_obj, ., col = viridis::viridis(7, direction = -1), label = TRUE)
+
+
+markers[["12"]] %>% rownames() %>% grep("CD|IL|CX",. ,value = TRUE) %>%
+  FeaturePlot(seurat_obj, ., col = viridis::viridis(7, direction = -1), label = TRUE)
+
+markers2 %>% filter(cluster %in% c(13)) %>% 
+  group_by(cluster) %>% top_n(10, importance) %>% .[["gene"]] %>%
+  FeaturePlot(seurat_obj, ., col = viridis::viridis(7, direction = -1), label = TRUE)
+
+FindMarkers(seurat_obj, ident.1 = "13")
+
+```
+
+```{r}
+#naive clustering
+my_counts <- seurat_obj@assays$RNA@counts
+Naiive_Seurat <- CreateSeuratObject(my_counts, project = "Naive_clustering")
+Naiive_Seurat[["orig.ident"]] <- plyr::mapvalues(
+    rownames(Naiive_Seurat@meta.data),
+    from = rownames(seurat_obj@meta.data),
+    to = seurat_obj@meta.data$orig.ident) 
+
+Naiive_Seurat[[ parameters[["label_name"]] ]] <- plyr::mapvalues(
+    rownames(Naiive_Seurat@meta.data),
+    from = rownames(seurat_obj@meta.data),
+    to = seurat_obj@meta.data[[ parameters[["label_name"]] ]]) 
+
+Naiive_Seurat[[ "Assigned_Cluster_CCA" ]] <- plyr::mapvalues(
+    rownames(Naiive_Seurat@meta.data),
+    from = rownames(seurat_obj@meta.data),
+    to = seurat_obj@active.ident) 
+
+
+Naiive_Seurat <- FindVariableFeatures(Naiive_Seurat, "RNA", nfeatures = 3000)
+
+Naiive_Seurat <- ScaleData(
+    Naiive_Seurat,
+    vars.to.regress = c("nCount_RNA", "percent.mt"))
+
+Naiive_Seurat <- RunPCA(
+    Naiive_Seurat,
+    npcs = 30, 
+    verbose = FALSE)
+
+ElbowPlot(Naiive_Seurat)
+Naiive_Seurat <- RunUMAP(
+    Naiive_Seurat, reduction = "pca", 
+    dims = 1:parameters[["num_dimensions_use_pca"]],
+    n.epochs = 500, min.dist = 0.4)
+
+Naiive_Seurat <- FindNeighbors(
+    Naiive_Seurat, 
+    reduction = "pca", 
+    dims = 1:parameters[["num_dimensions_use_pca"]])
+
+Naiive_Seurat <- FindClusters(
+    Naiive_Seurat, 
+    resolution = parameters[["resolution"]])
+
+
+# Visualization
+p1 <- DimPlot(
+    Naiive_Seurat, 
+    reduction = "pca",
+    group.by = parameters[["label_name"]])
+p2 <- DimPlot(
+    Naiive_Seurat, 
+    reduction = "pca",
+    group.by = "Assigned_Cluster_CCA", split.by = "orig.ident")
+
+DimPlot(
+    Naiive_Seurat, 
+    reduction = "pca",
+    group.by = "Assigned_Cluster_CCA", split.by = "orig.ident", dims = c(1,3))
+
+
+p3 <- DimPlot(
+    Naiive_Seurat,
+    reduction = "pca", 
+    label = TRUE)
+p4 <- DimPlot(
+    Naiive_Seurat,
+    reduction = "pca", 
+    group.by = "Assigned_Cluster_CCA",
+    label = TRUE,
+    dims = c(1,3))
+p1
+p2
+p3
+p4
+
+
+
+# Visualization
+p1 <- DimPlot(
+    Naiive_Seurat, 
+    reduction = "umap",
+    group.by = parameters[["label_name"]])
+p2 <- DimPlot(
+    Naiive_Seurat,
+    reduction = "umap", 
+    label = TRUE)
+p3 <- DimPlot(
+    Naiive_Seurat, 
+    reduction = "umap",
+    group.by = "orig.ident")
+
+Naiive_Seurat$Subtype <- seurat_obj$Subtype
+p20 <- DimPlot(
+    Naiive_Seurat, 
+    reduction = "umap",
+ group.by = "Subtype")
+ggsave(plot = p20, "combined_naiveClustering_subtype.png", height = 8, width = 10)
+
+p4 <- DimPlot(
+    Naiive_Seurat,
+    reduction = "umap", 
+    group.by = "Assigned_Cluster_CCA",
+    label = TRUE)
+p1
+p2
+p3
+p4
+p20
+```
+```{r identify differentially expressed genes }
+
+#identify within each cluster separately
+seurat_obj$cluster.disease <- paste(Idents(seurat_obj),seurat_obj$Subtype,sep="_")
+immune_combined <- seurat_obj
+Idents(immune.combined) <- seurat_obj$cluster.disease
+c0.deg <- FindMarkers(immune.combined, ident.1= "0_large", ident.2 = "0_small")
+c0.deg <- c0.deg[c0.deg$p_val_adj<0.05,]
+c1.deg <- FindMarkers(immune.combined, ident.1= "1_large", ident.2 = "1_small")
+c1.deg <- c1.deg[c1.deg$p_val_adj<0.05,]
+c2.deg <- FindMarkers(immune.combined, ident.1= "2_large", ident.2 = "2_small")
+c2.deg <- c2.deg[c2.deg$p_val_adj<0.05,]
+c3.deg <- FindMarkers(immune.combined, ident.1= "3_large", ident.2 = "3_small")
+c3.deg <- c3.deg[c3.deg$p_val_adj<0.05,]
+c4.deg <- FindMarkers(immune.combined, ident.1= "4_large", ident.2 = "4_small")
+c4.deg <- c4.deg[c4.deg$p_val_adj<0.05,]
+c5.deg <- FindMarkers(immune.combined, ident.1= "5_large", ident.2 = "5_small")
+c5.deg <- c5.deg[c5.deg$p_val_adj<0.05,]
+c6.deg <- FindMarkers(immune.combined, ident.1= "6_large", ident.2 = "6_small")
+c6.deg <- c6.deg[c6.deg$p_val_adj<0.05,]
+c7.deg <- FindMarkers(immune.combined, ident.1= "7_large", ident.2 = "7_small")
+c7.deg <- c7.deg[c7.deg$p_val_adj<0.05,]
+c8.deg <- FindMarkers(immune.combined, ident.1= "8_large", ident.2 = "8_small")
+c8.deg <- c8.deg[c8.deg$p_val_adj<0.05,]
+c9.deg <- FindMarkers(immune.combined, ident.1= "9_large", ident.2 = "9_small")
+c9.deg <- c9.deg[c9.deg$p_val_adj<0.05,]
+c10.deg <- FindMarkers(immune.combined, ident.1= "10_large", ident.2 = "10_small")
+c10.deg <- c10.deg[c10.deg$p_val_adj<0.05,]
+c11.deg <- FindMarkers(immune.combined, ident.1= "11_large", ident.2 = "11_small")
+c11.deg <- c11.deg[c11.deg$p_val_adj<0.05,]
+c12.deg <- FindMarkers(immune.combined, ident.1= "12_large", ident.2 = "12_small")
+c12.deg <- c12.deg[c12.deg$p_val_adj<0.05,]
+c13.deg <- FindMarkers(immune.combined, ident.1= "13_large", ident.2 = "13_small")
+c13.deg <- c13.deg[c13.deg$p_val_adj<0.05,]
+
+#write.csv(c0.deg,file="combined_cluster0_markers_largeVSsmall.csv",row.names=FALSE)
+write.csv(c1.deg,file="combined_cluster1_markers_largeVSsmall.csv",row.names=FALSE)
+write.csv(c2.deg,file="combined_cluster2_markers_largeVSsmall.csv",row.names=FALSE)
+#write.csv(c3.deg,file="combined_cluster3_markers_largeVSsmall.csv",row.names=FALSE)
+write.csv(c4.deg,file="combined_cluster4_markers_largeVSsmall.csv",row.names=FALSE)
+write.csv(c5.deg,file="combined_cluster5_markers_largeVSsmall.csv",row.names=FALSE)
+write.csv(c6.deg,file="combined_cluster6_markers_largeVSsmall.csv",row.names=FALSE)
+write.csv(c7.deg,file="combined_cluster7_markers_largeVSsmall.csv",row.names=FALSE)
+write.csv(c8.deg,file="combined_cluster8_markers_largeVSsmall.csv",row.names=FALSE)
+write.csv(c9.deg,file="combined_cluster9_markers_largeVSsmall.csv",row.names=FALSE)
+write.csv(c10.deg,file="combined_cluster10_markers_largeVSsmall.csv",row.names=FALSE)
+write.csv(c11.deg,file="combined_cluster11_markers_largeVSsmall.csv",row.names=FALSE)
+write.csv(c12.deg,file="combined_cluster12_markers_largeVSsmall.csv",row.names=FALSE)
+write.csv(c13.deg,file="combined_cluster13_markers_largeVSsmall.csv",row.names=FALSE)
+
+#identify across all clusters
+Idents(immune.combined) <- seurat_obj$Subtype
+all.deg <- FindMarkers(immune.combined, ident.1= "large", ident.2 = "small")
+all.deg <- all.deg[all.deg$p_val_adj < 0.05,]
+write.csv(all.deg, file="combined_allCluster_markers_largeVSsmall.csv",row.names=FALSE)
+```
+
+```{r try to run edgeR on smaller matrix}
+snns <- grep(pattern = "integrated_snn_res", 
+             names(immune.combined@meta.data),
+             value = TRUE)
+
+last_snn <- snns[length(snns)]
+
+Idents(immune.combined) <- paste0(
+    immune.combined@meta.data[[last_snn]],
+    "_", immune.combined@meta.data$Subtype)
+
+)
+sample <- as.character(immune.combined@meta.data$Sample)
+
+av.all.cells <- log1p(AverageExpression(seurat_obj, verbose= FALSE)$RNA)
+dim(av.all.cells)
+av.all.cells.keep <- av.all.cells[rowSums(av.all.cells)>=1,]
+#8402
+keep.genes <- rownames(av.all.cells.keep)
+tmp <- seurat_obj@assays$RNA@counts
+
+tmp2 <- tmp[rownames(tmp)%in% keep.genes,]
+
+clusters <- as.character(immune.combined@meta.data[[last_snn]])
+sample <- as.character(immune.combined@meta.data$Subtype)
+
+design <- model.matrix(~ 0 + sample:clusters)
+colnames(design) <- c("samplelarge_clusters0","samplesmall_clusters0",
+                      "samplelarge_clusters1","samplesmall_clusters1",
+                      "samplelarge_clusters2","samplesmall_clusters2",
+                      "samplelarge_clusters3","samplesmall_clusters3",
+                      "samplelarge_clusters4","samplesmall_clusters4",
+                      "samplelarge_clusters5","samplesmall_clusters5",
+                      "samplelarge_clusters6","samplesmall_clusters6",
+                      "samplelarge_clusters7","samplesmall_clusters7",
+                      "samplelarge_clusters8","samplesmall_clusters8",
+                      "samplelarge_clusters9","samplesmall_clusters9",
+                      "samplelarge_clusters10","samplesmall_clusters10",
+                      "samplelarge_clusters11","samplesmall_clusters11",
+                      "samplelarge_clusters12","samplesmall_clusters12",
+                      "samplelarge_clusters13","samplesmall_clusters13"
+                      )
+y <- DGEList(
+    data.matrix(tmp2),
+    group = sample,
+    remove.zeros = TRUE)
+
+# Keeping genes with at least 20 cells with expression values
+keep <- rowSums(cpm(y) > 1) >= 20 
+
+y <- y[keep, , keep.lib.sizes = FALSE]
+y <- calcNormFactors(y)
+
+
+design <- model.matrix(~ 0 + sample_clusters)
+
+design <- model.matrix(~ 0 + sample_clusters)
+y <- estimateDisp(y, design)
+fit <- glmQLFit(y, design, robust = TRUE)
+
+saveRDS(y, file = "DGEList_seurat_integratedOct17.RDS")
+
+samp_minus <- grep("samplesmall", colnames(design), value = TRUE)
+samp_plus <- grep("samplelarge", colnames(design), value = TRUE)
+contrast[samp_minus] <- -1
+contrast[samp_plus] <- 1
+res.all <- glmQLFTest(fit, contrast = contrast)
+
+my.contrasts <- makeContrasts(
+    clus0 = samplelarge_clusters0-samplesmall_clusters0,
+    clus1 = samplelarge_clusters1-samplesmall_clusters1,
+    clus2 = samplelarge_clusters2-samplesmall_clusters2,
+    clus3 = samplelarge_clusters3-samplesmall_clusters3,
+    clus4 = samplelarge_clusters4-samplesmall_clusters4,
+    clus5 = samplelarge_clusters5-samplesmall_clusters5,
+    clus6 = samplelarge_clusters6-samplesmall_clusters6,
+    clus7 = samplelarge_clusters7-samplesmall_clusters7,
+    clus8 = samplelarge_clusters8-samplesmall_clusters8,
+    clus9 = samplelarge_clusters9-samplesmall_clusters9,
+    clus10 = samplelarge_clusters10-samplesmall_clusters10,
+    clus11 = samplelarge_clusters11-samplesmall_clusters11,
+    clus12 = samplelarge_clusters12-samplesmall_clusters12,
+    clus13 = samplelarge_clusters13-samplesmall_clusters13,
+    levels=design
+)
+
+res.0 <- glmQLFTest(fit, contrast = my.contrasts[,"clus0"])
+res.1 <- glmQLFTest(fit, contrast = my.contrasts[,"clus1"])
+res.2 <- glmQLFTest(fit, contrast = my.contrasts[,"clus2"])
+res.3 <- glmQLFTest(fit, contrast = my.contrasts[,"clus3"])
+res.4 <- glmQLFTest(fit, contrast = my.contrasts[,"clus4"])
+res.5 <- glmQLFTest(fit, contrast = my.contrasts[,"clus5"])
+res.6 <- glmQLFTest(fit, contrast = my.contrasts[,"clus6"])
+res.7 <- glmQLFTest(fit, contrast = my.contrasts[,"clus7"])
+res.8 <- glmQLFTest(fit, contrast = my.contrasts[,"clus8"])
+res.9 <- glmQLFTest(fit, contrast = my.contrasts[,"clus9"])
+res.10 <- glmQLFTest(fit, contrast = my.contrasts[,"clus10"])
+res.11 <- glmQLFTest(fit, contrast = my.contrasts[,"clus11"])
+res.12 <- glmQLFTest(fit, contrast = my.contrasts[,"clus12"])
+res.13 <- glmQLFTest(fit, contrast = my.contrasts[,"clus13"])
+
+p.all <- p.adjust(res.all$table$PValue, method="BH")
+p.0 <- p.adjust(res.0$table$PValue, method="BH")
+p.1 <- p.adjust(res.1$table$PValue, method="BH")
+p.2 <- p.adjust(res.2$table$PValue, method="BH")
+p.3 <- p.adjust(res.3$table$PValue, method="BH")
+p.4 <- p.adjust(res.4$table$PValue, method="BH")
+p.5 <- p.adjust(res.5$table$PValue, method="BH")
+p.6 <- p.adjust(res.6$table$PValue, method="BH")
+p.7 <- p.adjust(res.7$table$PValue, method="BH")
+p.8 <- p.adjust(res.8$table$PValue, method="BH")
+p.9 <- p.adjust(res.9$table$PValue, method="BH")
+p.10 <- p.adjust(res.10$table$PValue, method="BH")
+p.11 <- p.adjust(res.11$table$PValue, method="BH")
+p.12 <- p.adjust(res.12$table$PValue, method="BH")
+p.13 <- p.adjust(res.13$table$PValue, method="BH")
+
+fdr.all <- cbind(res.all$table,p.all)
+fdr.0 <- cbind(res.0$table,p.0)
+fdr.1 <- cbind(res.1$table,p.1)
+fdr.2 <- cbind(res.2$table,p.2)
+fdr.3 <- cbind(res.3$table,p.3)
+fdr.4 <- cbind(res.4$table,p.4)
+fdr.5 <- cbind(res.5$table,p.5)
+fdr.6 <- cbind(res.6$table,p.6)
+fdr.7 <- cbind(res.7$table,p.7)
+fdr.8 <- cbind(res.8$table,p.8)
+fdr.9 <- cbind(res.9$table,p.9)
+fdr.10 <- cbind(res.10$table,p.10)
+fdr.11 <- cbind(res.11$table,p.11)
+fdr.12 <- cbind(res.12$table,p.12)
+fdr.13 <- cbind(res.13$table,p.13)
+
+write.csv(fdr.all,file = "all_ratliff_oct17combined_edgeRstats.csv")
+write.csv(fdr.0,file = "Oct17combined_edgeRresults/0_ratliff_oct17combined_edgeRstats.csv")
+write.csv(fdr.1,file = "1_ratliff_oct17combined_edgeRstats.csv")
+write.csv(fdr.2,file = "2_ratliff_oct17combined_edgeRstats.csv")
+write.csv(fdr.3,file = "3_ratliff_oct17combined_edgeRstats.csv")
+write.csv(fdr.4,file = "4_ratliff_oct17combined_edgeRstats.csv")
+write.csv(fdr.5,file = "5_ratliff_oct17combined_edgeRstats.csv")
+write.csv(fdr.6,file = "6_ratliff_oct17combined_edgeRstats.csv")
+write.csv(fdr.7,file = "7_ratliff_oct17combined_edgeRstats.csv")
+write.csv(fdr.8,file = "8_ratliff_oct17combined_edgeRstats.csv")
+write.csv(fdr.9,file = "Oct17combined_edgeRresults/9_ratliff_oct17combined_edgeRstats.csv")
+write.csv(fdr.10,file = "10_ratliff_oct17combined_edgeRstats.csv")
+write.csv(fdr.11,file = "11_ratliff_oct17combined_edgeRstats.csv")
+write.csv(fdr.12,file = "12_ratliff_oct17combined_edgeRstats.csv")
+write.csv(fdr.13,file = "13_ratliff_oct17combined_edgeRstats.csv")
+
+deg.all <- fdr.all[fdr.all$p.all<=0.01,]
+deg.0 <- fdr.0[fdr.0$p.0<=0.01,]
+deg.1 <- fdr.1[fdr.1$p.1<=0.01,]
+deg.2 <- fdr.2[fdr.2$p.2<=0.01,]
+deg.3 <- fdr.3[fdr.3$p.3<=0.01,]
+deg.4 <- fdr.4[fdr.4$p.4<=0.01,]
+deg.5 <- fdr.5[fdr.5$p.5<=0.01,]
+deg.6 <- fdr.6[fdr.6$p.6<=0.01,]
+deg.7 <- fdr.7[fdr.7$p.7<=0.01,]
+deg.8 <- fdr.8[fdr.8$p.8<=0.01,]
+deg.9 <- fdr.9[fdr.9$p.9<=0.01,]
+deg.10 <- fdr.10[fdr.10$p.10<=0.01,]
+deg.11 <- fdr.11[fdr.11$p.11<=0.01,]
+deg.12 <- fdr.12[fdr.12$p.12<=0.01,]
+deg.13 <- fdr.13[fdr.13$p.13<=0.01,]
+
+write.csv(deg.all, file="all_DEG_combinedOct17.csv")
+write.csv(deg.0, file="c0_DEG_combinedOct17.csv")
+write.csv(deg.1, file="c1_DEG_combinedOct17.csv")
+write.csv(deg.2, file="c2_DEG_combinedOct17.csv")
+write.csv(deg.3, file="c3_DEG_combinedOct17.csv")
+write.csv(deg.4, file="c4_DEG_combinedOct17.csv")
+write.csv(deg.5, file="c5_DEG_combinedOct17.csv")
+write.csv(deg.6, file="c6_DEG_combinedOct17.csv")
+write.csv(deg.7, file="c7_DEG_combinedOct17.csv")
+write.csv(deg.8, file="c8_DEG_combinedOct17.csv")
+write.csv(deg.9, file="c9_DEG_combinedOct17.csv")
+write.csv(deg.10, file="c10_DEG_combinedOct17.csv")
+write.csv(deg.11, file="c11_DEG_combinedOct17.csv")
+write.csv(deg.12, file="c12_DEG_combinedOct17.csv")
+write.csv(deg.13, file="c13_DEG_combinedOct17.csv")
+```
+
+```{r plot some of the degs}
+c0.cells <- subset(seurat_obj, idents = "0")
+c1.cells <- subset(seurat_obj, idents = "1")
+c2.cells <- subset(seurat_obj, idents = "2")
+c3.cells <- subset(seurat_obj, idents = "3")
+c4.cells <- subset(seurat_obj, idents = "4")
+c5.cells <- subset(seurat_obj, idents = "5")
+c6.cells <- subset(seurat_obj, idents = "6")
+c7.cells <- subset(seurat_obj, idents = "7")
+c8.cells <- subset(seurat_obj, idents = "8")
+c9.cells <- subset(seurat_obj, idents = "9")
+c10.cells <- subset(seurat_obj, idents = "10")
+c11.cells <- subset(seurat_obj, idents = "11")
+c12.cells <- subset(seurat_obj, idents = "12")
+c13.cells <- subset(seurat_obj, idents = "13")
+
+Idents(c0.cells) <- c0.cells$Subtype
+Idents(c1.cells) <- c1.cells$Subtype
+Idents(c2.cells) <- c2.cells$Subtype
+Idents(c3.cells) <- c3.cells$Subtype
+Idents(c4.cells) <- c4.cells$Subtype
+Idents(c5.cells) <- c5.cells$Subtype
+Idents(c6.cells) <- c6.cells$Subtype
+Idents(c7.cells) <- c7.cells$Subtype
+Idents(c8.cells) <- c8.cells$Subtype
+Idents(c9.cells) <- c9.cells$Subtype
+Idents(c10.cells) <- c10.cells$Subtype
+Idents(c11.cells) <- c11.cells$Subtype
+Idents(c12.cells) <- c12.cells$Subtype
+Idents(c13.cells) <- c13.cells$Subtype
+
+#counts cells in each cluster and sample
+
+library('plyr')
+c13.freq <- count(c13.cells@meta.data,'Sample')
+c13.freq$cluster <- rep(13,14)
+frequency <- rbind(c0.freq,c1.freq,c2.freq,c3.freq,c4.freq,c5.freq,c6.freq,c7.freq,c8.freq,c9.freq,c10.freq,c11.freq,c12.freq,c13.freq)
+write.csv(frequency,file="frequency_sample_cells_cluster_Oct17combined.csv")
+av.0.cells <- log1p(AverageExpression(c0.cells, verbose= FALSE)$RNA)
+av.1.cells <- log1p(AverageExpression(c1.cells, verbose= FALSE)$RNA)
+av.2.cells <- log1p(AverageExpression(c2.cells, verbose= FALSE)$RNA)
+av.3.cells <- log1p(AverageExpression(c3.cells, verbose= FALSE)$RNA)
+av.4.cells <- log1p(AverageExpression(c4.cells, verbose= FALSE)$RNA)
+av.5.cells <- log1p(AverageExpression(c5.cells, verbose= FALSE)$RNA)
+av.6.cells <- log1p(AverageExpression(c6.cells, verbose= FALSE)$RNA)
+av.7.cells <- log1p(AverageExpression(c7.cells, verbose= FALSE)$RNA)
+av.8.cells <- log1p(AverageExpression(c8.cells, verbose= FALSE)$RNA)
+av.9.cells <- log1p(AverageExpression(c9.cells, verbose= FALSE)$RNA)
+av.10.cells <- log1p(AverageExpression(c10.cells, verbose= FALSE)$RNA)
+av.11.cells <- log1p(AverageExpression(c11.cells, verbose= FALSE)$RNA)
+av.12.cells <- log1p(AverageExpression(c12.cells, verbose= FALSE)$RNA)
+av.13.cells <- log1p(AverageExpression(c13.cells, verbose= FALSE)$RNA)
+
+av.0.cells$gene <- rownames(av.0.cells)
+av.1.cells$gene <- rownames(av.1.cells)
+av.2.cells$gene <- rownames(av.2.cells)
+av.3.cells$gene <- rownames(av.3.cells)
+av.4.cells$gene <- rownames(av.4.cells)
+av.5.cells$gene <- rownames(av.5.cells)
+av.6.cells$gene <- rownames(av.6.cells)
+av.7.cells$gene <- rownames(av.7.cells)
+av.8.cells$gene <- rownames(av.8.cells)
+av.9.cells$gene <- rownames(av.9.cells)
+av.10.cells$gene <- rownames(av.10.cells)
+av.11.cells$gene <- rownames(av.11.cells)
+av.12.cells$gene <- rownames(av.12.cells)
+av.13.cells$gene <- rownames(av.13.cells)
+
+genes.0 <- rownames(deg.0[1:10,])
+genes.1 <- rownames(deg.1[1:10,])
+genes.2 <- rownames(deg.2[1:10,])
+genes.3 <- rownames(deg.3[1:10,])
+genes.4 <- rownames(deg.4[1:10,])
+genes.5 <- rownames(deg.5[1:10,])
+genes.6 <- rownames(deg.6[1:10,])
+genes.7 <- rownames(deg.7[1:10,])
+genes.8 <- rownames(deg.8[1:10,])
+genes.9 <- rownames(deg.9[1:10,])
+genes.10 <- rownames(deg.10[1:10,])
+genes.11 <- rownames(deg.10[1:11,])
+genes.12 <- rownames(deg.10[1:12,])
+genes.13 <- rownames(deg.10[1:13,])
+
+fdr.13$gene <- rownames(fdr.13)
+labelled_points <- filter(fdr.13, p.13 < 0.01) %>% 
+        dplyr::top_n(15, abs(logFC))
+
+fdr.9$gene <- rownames(fdr.9)
+fdr.9$gene <- fdr.9$X
+labelled_points <- filter(fdr.9, p.9 < 0.01) %>% 
+        dplyr::top_n(15, abs(logFC))
+    
+g <- ggplot(fdr.9, aes(y = logFC, x = logCPM, label = gene)) +
+        geom_point() +
+        geom_point(colour = "red", data = labelled_points) +
+        ggrepel::geom_label_repel(data = labelled_points) + 
+        ggtitle("MAplot for cluster 9", 
+                subtitle = "large-small")
+png(filename = "MAplot_cluster9_fixLabels.png", res=300, units = 'in', width=10, height=10)    
+    print(g)
+ dev.off()   
+
+```
+```{r pathway analysis}
+
+library(clusterProfiler)
+library(org.Hs.eg.db)
+library(biomaRt)
+
+listMarts()
+#choose ensembl dataset and filters to use
+ensembl=useMart("ensembl")
+ensembl = useMart(biomart = "ENSEMBL_MART_ENSEMBL",dataset="hsapiens_gene_ensembl", host = 'www.ensembl.org',
+                  ensemblRedirect = FALSE)
+filters = listFilters(ensembl)
+filters[1:5,]
+attributes = listAttributes(ensembl)
+attributes[1:15,]
+filterOptions("ensembl_gene_id",ensembl)
+background <-res.all
+get_annotations <- function(degs){
+    annot <- getBM(attributes=c('ensembl_gene_id','hgnc_symbol','entrezgene_id','description','external_gene_name','chromosome_name','start_position','end_position','strand'), filters='hgnc_symbol', values=degs$X, mart=ensembl)
+    deg_annot = merge(x = degs, y = annot, by.x="X",by.y='hgnc_symbol',all.x=TRUE)
+    return(deg_annot)
+}
+background.anno <- get_annotations(background)
+deg.anno.all <- get_annotations(deg.all)
+deg.anno.0 <- get_annotations(deg.0)
+deg.anno.1 <- get_annotations(deg.1)
+deg.anno.2 <- get_annotations(deg.2)
+deg.anno.3 <- get_annotations(deg.3)
+deg.anno.4 <- get_annotations(deg.4)
+deg.anno.5 <- get_annotations(deg.5)
+deg.anno.6 <- get_annotations(deg.6)
+deg.anno.7 <- get_annotations(deg.7)
+deg.anno.8 <- get_annotations(deg.8)
+deg.anno.9 <- get_annotations(deg.9)
+deg.anno.10 <- get_annotations(deg.10)
+deg.anno.11 <- get_annotations(deg.11)
+deg.anno.12 <- get_annotations(deg.12)
+deg.anno.13 <- get_annotations(deg.13)
+
+kk.all <- enrichKEGG(gene= deg.anno.all$entrezgene_id,
+                   organism='hsa',
+                   pAdjustMethod = 'BH',
+                   pvalueCutoff = 0.05
+                  
+                )
+#write.csv(kk.all,file="all_combined_Oct17_enrichedKEGG.csv")
+
+cc.go.13 <- enrichGO(gene= deg.anno.13$entrezgene_id,
+                      pAdjustMethod = 'BH',
+                      pvalueCutoff = 0.05,
+                      OrgDb = org.Hs.eg.db,
+                      ont="CC",
+                     readable = TRUE,
+                      universe = as.character(na.omit(background.anno$entrezgene_id)))
+
+write.csv(cc.go.13, file = "Enriched_GO_CC_c13.csv")
+
+bp.go.13 <- enrichGO(gene= deg.anno.13$entrezgene_id,
+                      pAdjustMethod = 'BH',
+                      pvalueCutoff = 0.05,
+                      OrgDb = org.Hs.eg.db,
+                      ont="BP",
+                      universe = as.character(na.omit(background.anno$entrezgene_id)))
+
+write.csv(bp.go.13, file = "Enriched_GO_BP_c13.csv")
+
+mf.go.13 <- enrichGO(gene= deg.anno.13$entrezgene_id,
+                      pAdjustMethod = 'BH',
+                      pvalueCutoff = 0.05,
+                      OrgDb = org.Hs.eg.db,
+                      ont="MF",
+                      universe = as.character(na.omit(background.anno$entrezgene_id)))
+
+write.csv(mf.go.13, file = "Enriched_GO_MF_c13.csv")
+
+save.image(file="oct17combined.RData")
+```
