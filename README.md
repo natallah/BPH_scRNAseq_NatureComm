@@ -3,11 +3,14 @@ scripts used in the analysis of all cells and leukocytes associated prostates fr
 
 Rmarkdown files are included that can be used to process any CellRanger generated 10x dataset (data should include files in the /outs/filtered_feature_bc_matrix resulting from running 10x Genomics's CellRanger software).
 
-1.System Requirements
-Operating systems and dependencies used in the analysis:
+Operating systems and dependencies used in the analysis
+--------------------------------------------------------
 R version 3.5.1 (2018-07-02)
 Platform: x86_64-pc-linux-gnu (64-bit)
 Running under: CentOS Linux 7 (Core)
+
+Dependencies
+============================================================
 
 Matrix products: default
 BLAS/LAPACK: /apps/halstead7/R/prerequisites/halstead/openblas/0.2.19_gcc-6.3.0/lib/libopenblas_haswellp-r0.2.19.so
