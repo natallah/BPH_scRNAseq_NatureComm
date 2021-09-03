@@ -1,0 +1,1634 @@
+---
+title: "BPH All Cells scRNA-seq Analysis"
+author: "Nadia Lanman"
+date: "7/21/2021"
+output:
+  html_document:
+    toc: true
+    highlight: kate
+    keep_md: yes
+---
+---
+
+```{r knitr_init, echo=FALSE, cache=FALSE}
+library(knitr)
+library(rmdformats)
+
+## Global options
+options(max.print="75")
+opts_chunk$set(echo=TRUE,
+	             cache=FALSE,
+               prompt=FALSE,
+               tidy=TRUE,
+               comment=NA,
+               message=TRUE,
+               warning=TRUE)
+opts_knit$set(width=75)
+```
+
+# Quality Control
+
+Prior to this analysis, the CellRanger software suite was used to trim reads based on quality, compute basic quality control statistics, map reads to the human reference genome, and compute counts for each gene.
+```{r include=FALSE}
+
+library(Seurat)
+library(tidyverse)
+library(ggforce)
+library(ComplexHeatmap)
+library(ggrepel)
+library(clustree)
+library(wesanderson)
+library(tidyverse)
+library(purrr)
+library(dplyr)
+library(ggplot2)
+library(sctransform)
+library(future)
+library(future.apply)
+library(RColorBrewer)
+require(scales)
+library(qusage)
+library(biomaRt)
+library(lattice)
+library(vioplot)
+library('org.Hs.eg.db')
+
+
+set.seed(42)
+
+type.color <- wes_palette("FantasticFox1", n=5)
+my_color_palette.origident <- hue_pal()(5)
+
+data_1628 <- Read10X(data.dir = "../step1_cellRanger/1628_all/outs/filtered_feature_bc_matrix/")
+data_1595 <- Read10X(data.dir = "../step1_cellRanger/1595_all/outs/filtered_feature_bc_matrix/")
+data_1652 <- Read10X(data.dir = "../step1_cellRanger/1652_all/outs/filtered_feature_bc_matrix/")
+data_1562 <- Read10X(data.dir = "../step1_cellRanger/1562_all/outs/filtered_feature_bc_matrix/")
+data_1579 <- Read10X(data.dir = "../step1_cellRanger/1579_all/outs/filtered_feature_bc_matrix/")
+
+seuratobj.1628 <- CreateSeuratObject(counts = data_1628[["Gene Expression"]], assay="RNA", project = "1628")
+seuratobj.1595 <- CreateSeuratObject(counts = data_1595[["Gene Expression"]], assay="RNA", project = "1595")
+seuratobj.1652 <- CreateSeuratObject(counts = data_1652[["Gene Expression"]], assay="RNA", project = "1652")
+seuratobj.1562 <- CreateSeuratObject(counts = data_1562, project = "1562")
+seuratobj.1579 <- CreateSeuratObject(counts = data_1579[["Gene Expression"]], assay="RNA", project = "1579")
+
+adtobj_1628 <- CreateAssayObject(counts = data_1628[["Antibody Capture"]])
+adtobj_1595 <- CreateAssayObject(counts = data_1595[["Antibody Capture"]])
+adtobj_1652 <- CreateAssayObject(counts = data_1652[["Antibody Capture"]])
+adtobj_1579 <- CreateAssayObject(counts = data_1579[["Antibody Capture"]])
+
+seuratobj.1628[["ADT"]] <- adtobj_1628
+seuratobj.1595[["ADT"]] <- adtobj_1595
+seuratobj.1652[["ADT"]] <- adtobj_1652
+seuratobj.1579[["ADT"]] <- adtobj_1579
+
+mtfilt <- 22
+minfeat <- 300
+maxfeat <- 10000
+PCuse <- 15
+res <- 0.6
+
+projectname <- 'allCells'
+```
+
+## Individual Sample Quality Control
+
+Initially quality control, normalization, and scaling are performed on individual samples.  Cells were filtered out if they contained below `r minfeat` features, greater than `r maxfeat` (in an attempt to filter out doublets), or greater than `r mtfilt` percent of reads mapping to mitochondrial transcripts.
+
+
+#### All Cells 1628
+```{r QCviolin1, echo=FALSE, warning=FALSE, fig.align="center", fig.width=6, fig.height=4,fig.cap= "** Violin plots of the  number of RNAs per cell, number of counts mapping to mRNAs per cell and the percent of reads mapping to mitochondrial transcripts in each cell.**"}
+seuratobj.1628[["percent.mt"]] <- PercentageFeatureSet(
+  seuratobj.1628, 
+  pattern = "^MT-")
+
+VlnPlot(
+  seuratobj.1628,
+  features = c("nFeature_RNA", "nCount_RNA", "percent.mt"),cols = my_color_palette.origident[1],
+  ncol = 3)
+```
+
+```{r featurescatter1,echo=FALSE, warning=FALSE, fig.align="center", fig.width=6, fig.height=6,fig.cap= "**Percent of reads mapping to mitochondrial transcripts versus number of RNA features seen in each cell.**  Correlation coefficient between the two varaiables is seen above the plot and lines indicate cutoffs used to filter cells."}
+FeatureScatter(
+  seuratobj.1628, cols = my_color_palette.origident[1],
+  feature1 = "percent.mt",
+  feature2 = "nFeature_RNA") + 
+    scale_y_log10() +
+    scale_x_log10() +
+  geom_hline(yintercept = minfeat) +
+  geom_hline(yintercept = maxfeat) +
+  geom_vline(xintercept = mtfilt)
+```
+
+```{r featurescatter25, echo=FALSE, warning=FALSE, fig.align="center", fig.width=6, fig.height=6,fig.cap= "** Number of counts mapping to mRNA versus number of RNA features seen in each cell.**  Correlation coefficient between the two varaiables is seen above the plot and lines indicate cutoffs used to filter cells."}
+FeatureScatter(
+  seuratobj.1628, 
+  feature1 = "nCount_RNA",cols = my_color_palette.origident[1],
+  feature2 = "nFeature_RNA") + 
+    scale_y_log10() +
+    scale_x_log10() +
+  geom_hline(yintercept = minfeat) +
+  geom_hline(yintercept = maxfeat) 
+```
+
+```{r include=FALSE}
+startCells <- length(Cells(seuratobj.1628))
+
+cells_keep <- Seurat:::WhichCells.Seurat(
+  seuratobj.1628, cells = Cells(seuratobj.1628),
+  idents = Idents(seuratobj.1628), expression = `nFeature_RNA` > {minfeat} & 
+    `nFeature_RNA` < {maxfeat} &
+    percent.mt < {mtfilt})
+
+cells_lost_mt <- Seurat:::WhichCells.Seurat(
+  seuratobj.1628, cells = Cells(seuratobj.1628),
+  idents = Idents(seuratobj.1628), 
+    percent.mt >= {mtfilt})
+
+seuratobj.1628 <- subset(seuratobj.1628,subset=nFeature_RNA > {minfeat} & 
+    nFeature_RNA < {maxfeat} &
+    percent.mt < {mtfilt} & nCount_RNA > 100)
+
+nmkept <- length(cells_keep)
+
+startCells.1628 <- startCells
+keepCells.1628 <- nmkept
+```
+
+
+
+#### All Cells 1595
+```{r QCviolin25, echo=FALSE, warning=FALSE, fig.align="center", fig.width=6, fig.height=4,fig.cap= "** Violin plots of the  number of RNAs per cell, number of counts mapping to mRNAs per cell and the percent of reads mapping to mitochondrial transcripts in each cell.**"}
+seuratobj.1595[["percent.mt"]] <- PercentageFeatureSet(
+  seuratobj.1595, 
+  pattern = "^MT-")
+
+VlnPlot(
+  seuratobj.1595,cols = my_color_palette.origident[2],
+  features = c("nFeature_RNA", "nCount_RNA", "percent.mt"),
+  ncol = 3) 
+```
+
+```{r featurescatter28,echo=FALSE, warning=FALSE, fig.align="center", fig.width=6, fig.height=6,fig.cap= "**Percent of reads mapping to mitochondrial transcripts versus number of RNA features seen in each cell.**  Correlation coefficient between the two varaiables is seen above the plot and lines indicate cutoffs used to filter cells."}
+FeatureScatter(
+  seuratobj.1595, cols = my_color_palette.origident[2],
+  feature1 = "percent.mt",
+  feature2 = "nFeature_RNA") + 
+    scale_y_log10() +
+    scale_x_log10() +
+  geom_hline(yintercept = minfeat) +
+  geom_hline(yintercept = maxfeat) +
+  geom_vline(xintercept = mtfilt)
+```
+
+```{r featurescatter2290, echo=FALSE, warning=FALSE, fig.align="center", fig.width=6, fig.height=6,fig.cap= "** Number of counts mapping to mRNA versus number of RNA features seen in each cell.**  Correlation coefficient between the two varaiables is seen above the plot and lines indicate cutoffs used to filter cells."}
+FeatureScatter(
+  seuratobj.1595, cols = my_color_palette.origident[2],
+  feature1 = "nCount_RNA",
+  feature2 = "nFeature_RNA") + 
+    scale_y_log10() +
+    scale_x_log10() +
+  geom_hline(yintercept = minfeat) +
+  geom_hline(yintercept = maxfeat) 
+```
+
+```{r include=FALSE}
+startCells <- length(Cells(seuratobj.1595))
+
+cells_keep <- Seurat:::WhichCells.Seurat(
+  seuratobj.1595, cells = Cells(seuratobj.1595),
+  idents = Idents(seuratobj.1595), expression = `nFeature_RNA` > {minfeat} & 
+    `nFeature_RNA` < {maxfeat} &
+    percent.mt < {mtfilt})
+
+cells_lost_mt <- Seurat:::WhichCells.Seurat(
+  seuratobj.1595, cells = Cells(seuratobj.1595),
+  idents = Idents(seuratobj.1595), 
+    percent.mt >= {mtfilt})
+
+seuratobj.1595 <- subset(seuratobj.1595,subset=nFeature_RNA > {minfeat} & 
+    nFeature_RNA < {maxfeat} &
+    percent.mt < {mtfilt} & nCount_RNA > 100)
+
+nmkept <- length(cells_keep)
+
+startCells.1595 <- startCells
+keepCells.1595 <- nmkept
+```
+
+
+#### All Cells 1652
+```{r QCviolin38, echo=FALSE, warning=FALSE, fig.align="center", fig.width=6, fig.height=4,fig.cap= "** Violin plots of the  number of RNAs per cell, number of counts mapping to mRNAs per cell and the percent of reads mapping to mitochondrial transcripts in each cell.**"}
+seuratobj.1652[["percent.mt"]] <- PercentageFeatureSet(
+  seuratobj.1652, 
+  pattern = "^MT-")
+
+VlnPlot(
+  seuratobj.1652,cols = my_color_palette.origident[3],
+  features = c("nFeature_RNA", "nCount_RNA", "percent.mt"),
+  ncol = 3) 
+```
+
+```{r featurescatter3,echo=FALSE, warning=FALSE, fig.align="center", fig.width=6, fig.height=6,fig.cap= "**Percent of reads mapping to mitochondrial transcripts versus number of RNA features seen in each cell.**  Correlation coefficient between the two varaiables is seen above the plot and lines indicate cutoffs used to filter cells."}
+FeatureScatter(
+  seuratobj.1652, cols = my_color_palette.origident[3],
+  feature1 = "percent.mt",
+  feature2 = "nFeature_RNA") + 
+    scale_y_log10() +
+    scale_x_log10() +
+  geom_hline(yintercept = minfeat) +
+  geom_hline(yintercept = maxfeat) +
+  geom_vline(xintercept = mtfilt)
+```
+
+```{r featurescatter33899, echo=FALSE, warning=FALSE, fig.align="center", fig.width=6, fig.height=6,fig.cap= "** Number of counts mapping to mRNA versus number of RNA features seen in each cell.**  Correlation coefficient between the two varaiables is seen above the plot and lines indicate cutoffs used to filter cells."}
+FeatureScatter(
+  seuratobj.1652, cols = my_color_palette.origident[3],
+  feature1 = "nCount_RNA",
+  feature2 = "nFeature_RNA") + 
+    scale_y_log10() +
+    scale_x_log10() +
+  geom_hline(yintercept = minfeat) +
+  geom_hline(yintercept = maxfeat) 
+```
+
+```{r include=FALSE}
+startCells <- length(Cells(seuratobj.1652))
+
+cells_keep <- Seurat:::WhichCells.Seurat(
+  seuratobj.1652, cells = Cells(seuratobj.1652),
+  idents = Idents(seuratobj.1652), expression = `nFeature_RNA` > {minfeat} & 
+    `nFeature_RNA` < {maxfeat} &
+    percent.mt < {mtfilt})
+
+cells_lost_mt <- Seurat:::WhichCells.Seurat(
+  seuratobj.1652, cells = Cells(seuratobj.1652),
+  idents = Idents(seuratobj.1652), 
+    percent.mt >= {mtfilt})
+
+seuratobj.1652 <- subset(seuratobj.1652,subset=nFeature_RNA > {minfeat} & 
+    nFeature_RNA < {maxfeat} &
+    percent.mt < {mtfilt} & nCount_RNA > 100)
+
+nmkept <- length(cells_keep)
+
+startCells.1652 <- startCells
+keepCells.1652 <- nmkept
+```
+
+
+#### All Cells 1562
+```{r QCviolin45, echo=FALSE, warning=FALSE, fig.align="center", fig.width=6, fig.height=4,fig.cap= "** Violin plots of the  number of RNAs per cell, number of counts mapping to mRNAs per cell and the percent of reads mapping to mitochondrial transcripts in each cell.**"}
+seuratobj.1562[["percent.mt"]] <- PercentageFeatureSet(
+  seuratobj.1562, 
+  pattern = "^MT-")
+
+VlnPlot(
+  seuratobj.1562,cols = my_color_palette.origident[4],
+  features = c("nFeature_RNA", "nCount_RNA", "percent.mt"),
+  ncol = 3) 
+```
+
+```{r featurescatter47,echo=FALSE, warning=FALSE, fig.align="center", fig.width=6, fig.height=6,fig.cap= "**Percent of reads mapping to mitochondrial transcripts versus number of RNA features seen in each cell.**  Correlation coefficient between the two varaiables is seen above the plot and lines indicate cutoffs used to filter cells."}
+FeatureScatter(
+  seuratobj.1562, cols = my_color_palette.origident[4],
+  feature1 = "percent.mt",
+  feature2 = "nFeature_RNA") + 
+    scale_y_log10() +
+    scale_x_log10() +
+  geom_hline(yintercept = minfeat) +
+  geom_hline(yintercept = maxfeat) +
+  geom_vline(xintercept = mtfilt)
+```
+
+```{r featurescatter447, echo=FALSE, warning=FALSE, fig.align="center", fig.width=6, fig.height=6,fig.cap= "** Number of counts mapping to mRNA versus number of RNA features seen in each cell.**  Correlation coefficient between the two varaiables is seen above the plot and lines indicate cutoffs used to filter cells."}
+FeatureScatter(
+  seuratobj.1562, cols = my_color_palette.origident[4],
+  feature1 = "nCount_RNA",
+  feature2 = "nFeature_RNA") + 
+    scale_y_log10() +
+    scale_x_log10() +
+  geom_hline(yintercept = minfeat) +
+  geom_hline(yintercept = maxfeat) 
+```
+
+```{r include=FALSE}
+startCells <- length(Cells(seuratobj.1562))
+
+cells_keep <- Seurat:::WhichCells.Seurat(
+  seuratobj.1562, cells = Cells(seuratobj.1562),
+  idents = Idents(seuratobj.1562), expression = `nFeature_RNA` > {minfeat} & 
+    `nFeature_RNA` < {maxfeat} &
+    percent.mt < {mtfilt})
+
+cells_lost_mt <- Seurat:::WhichCells.Seurat(
+  seuratobj.1562, cells = Cells(seuratobj.1562),
+  idents = Idents(seuratobj.1562), 
+    percent.mt >= {mtfilt})
+
+seuratobj.1562 <- subset(seuratobj.1562,subset=nFeature_RNA > {minfeat} & 
+    nFeature_RNA < {maxfeat} &
+    percent.mt < {mtfilt} & nCount_RNA > 100)
+
+nmkept <- length(cells_keep)
+
+startCells.1562 <- startCells
+keepCells.1562 <- nmkept
+```
+
+
+#### All Cells 1579
+```{r QCviolin5, echo=FALSE, warning=FALSE, fig.align="center", fig.width=6, fig.height=4,fig.cap= "** Violin plots of the  number of RNAs per cell, number of counts mapping to mRNAs per cell and the percent of reads mapping to mitochondrial transcripts in each cell.**"}
+seuratobj.1579[["percent.mt"]] <- PercentageFeatureSet(
+  seuratobj.1579, 
+  pattern = "^MT-")
+
+VlnPlot(
+  seuratobj.1579,cols = my_color_palette.origident[5],
+  features = c("nFeature_RNA", "nCount_RNA", "percent.mt"),
+  ncol = 3) 
+```
+
+```{r featurescatter5,echo=FALSE, warning=FALSE, fig.align="center", fig.width=6, fig.height=6,fig.cap= "**Percent of reads mapping to mitochondrial transcripts versus number of RNA features seen in each cell.**  Correlation coefficient between the two varaiables is seen above the plot and lines indicate cutoffs used to filter cells."}
+FeatureScatter(
+  seuratobj.1579, cols = my_color_palette.origident[5],
+  feature1 = "percent.mt",
+  feature2 = "nFeature_RNA") + 
+    scale_y_log10() +
+    scale_x_log10() +
+  geom_hline(yintercept = minfeat) +
+  geom_hline(yintercept = maxfeat) +
+  geom_vline(xintercept = mtfilt)
+```
+
+```{r featurescatter55, echo=FALSE, warning=FALSE, fig.align="center", fig.width=6, fig.height=6,fig.cap= "** Number of counts mapping to mRNA versus number of RNA features seen in each cell.**  Correlation coefficient between the two varaiables is seen above the plot and lines indicate cutoffs used to filter cells."}
+FeatureScatter(
+  seuratobj.1579, cols = my_color_palette.origident[5],
+  feature1 = "nCount_RNA",
+  feature2 = "nFeature_RNA") + 
+    scale_y_log10() +
+    scale_x_log10() +
+  geom_hline(yintercept = minfeat) +
+  geom_hline(yintercept = maxfeat) 
+```
+
+```{r include=FALSE}
+startCells <- length(Cells(seuratobj.1579))
+
+cells_keep <- Seurat:::WhichCells.Seurat(
+  seuratobj.1579, cells = Cells(seuratobj.1579),
+  idents = Idents(seuratobj.1579), expression = `nFeature_RNA` > {minfeat} & 
+    `nFeature_RNA` < {maxfeat} &
+    percent.mt < {mtfilt})
+
+cells_lost_mt <- Seurat:::WhichCells.Seurat(
+  seuratobj.1579, cells = Cells(seuratobj.1579),
+  idents = Idents(seuratobj.1579), 
+    percent.mt >= {mtfilt})
+
+seuratobj.1579 <- subset(seuratobj.1579,subset=nFeature_RNA > {minfeat} & 
+    nFeature_RNA < {maxfeat} &
+    percent.mt < {mtfilt} & nCount_RNA > 100)
+
+nmkept <- length(cells_keep)
+
+startCells.1579 <- startCells
+keepCells.1579 <- nmkept
+```
+
+
+```{r echo=FALSE, results= 'asis'}
+Sample.1628 <- c(startCells.1628,keepCells.1628)
+Sample.1579 <- c(startCells.1579,keepCells.1579)
+Sample.1562 <- c(startCells.1562,keepCells.1562)
+Sample.1652 <- c(startCells.1652,keepCells.1652)
+Sample.1595 <- c(startCells.1595,keepCells.1595)
+
+filtertable <- rbind(Sample.1628,Sample.1579,Sample.1562,Sample.1652,Sample.1595)
+colnames(filtertable) <- c("Starting Cells","Remaining Cells")
+kable(filtertable,caption="Original cell number in each sample and cells remaining after filtering.")
+
+
+```
+
+
+# Normalization and Scaling
+
+ Normalization was performed and then cell-cycle scoring and correction were performed using the newest normalization method available in seurat, scTransform.  To assign each cell a score, the expression of G2/M and S phase markers were used. These markers should be inversely correlated and cells which express neither are likely not cycling. Within SCTransform, 3000 variable genes were selected and the variables which were regressed out are the percent of reads mapping to mitochondria, S score, and G2/M score. Finally, selection of clustering settings and then unsupervised clustering of the sample group was performed.
+ 
+```{r echo=FALSE}
+
+s.genes <- cc.genes$s.genes
+g2m.genes <- cc.genes$g2m.genes
+
+#seuratobj.1562 <- NormalizeData(seuratobj.1562)
+#seuratobj.1562 <- CellCycleScoring(seuratobj.1562, s.features = s.genes, g2m.features = g2m.genes)
+#seuratobj.1562 <- SCTransform(seuratobj.1562, verbose = FALSE, vars.to.regress = c("percent.mt","S.Score","G2M.Score"),return.only.var.genes = FALSE, variable.features.n = 3000)
+
+#seuratobj.1579 <- NormalizeData(seuratobj.1579)
+#seuratobj.1579 <- CellCycleScoring(seuratobj.1579, s.features = s.genes, g2m.features = g2m.genes)
+#seuratobj.1579 <- SCTransform(seuratobj.1579, verbose = FALSE, vars.to.regress = c("percent.mt","S.Score","G2M.Score"),return.only.var.genes = FALSE, variable.features.n = 3000)
+
+#seuratobj.1595 <- NormalizeData(seuratobj.1595)
+#seuratobj.1595 <- CellCycleScoring(seuratobj.1595, s.features = s.genes, g2m.features = g2m.genes)
+#seuratobj.1595 <- SCTransform(seuratobj.1595, verbose = FALSE, vars.to.regress = c("percent.mt","S.Score","G2M.Score"),return.only.var.genes = FALSE, variable.features.n = 3000)
+
+#seuratobj.1628 <- NormalizeData(seuratobj.1628)
+#seuratobj.1628 <- CellCycleScoring(seuratobj.1628, s.features = s.genes, g2m.features = g2m.genes)
+#seuratobj.1628 <- SCTransform(seuratobj.1628, verbose = FALSE, vars.to.regress = c("percent.mt","S.Score","G2M.Score"),return.only.var.genes = FALSE, variable.features.n = 3000)
+
+#seuratobj.1652 <- NormalizeData(seuratobj.1652)
+#seuratobj.1652 <- CellCycleScoring(seuratobj.1652, s.features = s.genes, g2m.features = g2m.genes)
+#seuratobj.1652 <- SCTransform(seuratobj.1652, verbose = FALSE, vars.to.regress = c("percent.mt","S.Score","G2M.Score"),return.only.var.genes = FALSE, variable.features.n = 3000)
+
+#saveRDS(seuratobj.1562,"Indiv_all_1562.RDS")
+#saveRDS(seuratobj.1579,"Indiv_all_1579.RDS")
+#saveRDS(seuratobj.1595,"Indiv_all_1595.RDS")
+#saveRDS(seuratobj.1628,"Indiv_all_1628.RDS")
+#saveRDS(seuratobj.1652,"Indiv_all_1652.RDS")
+
+```
+
+# Integration and Dimension Reduction
+
+For this analysis, all samples were combined together and anchor-based clustering was used to perform integrated clustering on the cells.  Previously filtered data were combined and clustered together. Principal component analysis was next performed, and principal components selected for using in later analyses.
+
+```{r echo=FALSE}
+#combined.list <-c(seuratobj.1562,seuratobj.1579,seuratobj.1595,seuratobj.1628,seuratobj.1652)
+#features <- SelectIntegrationFeatures(object.list=combined.list)
+#combined.list <- PrepSCTIntegration(object.list=combined.list,anchor.features=features)
+#anchors <- FindIntegrationAnchors(object.list=combined.list, anchor.features=features)
+#seurat.comb <- IntegrateData(anchorset=anchors)
+
+seurat.comb <- readRDS("all_combined.RDS")
+seurat.comb@project.name <- "allCells"
+DefaultAssay(seurat.comb) <- "integrated"
+
+#saveRDS(seurat.comb,"all_combined.RDS")
+
+
+```
+
+```{r elbowplot, echo=FALSE, warning=FALSE, fig.align="center", fig.width=6, fig.height=4,fig.cap= "**Elbow plot for top principal components.**  Generally, PCs are used for further analysis which capture the majority of the variation seen in the data (before the elbow which is seen once the standard deviation associated with the PCs becomes small and does not change much between PCx and PCx+1."}
+
+#seurat.comb <- ScaleData(seurat.comb, verbose=FALSE)
+#seurat.comb <- RunPCA(seurat.comb,npcs=30, verbose=FALSE)
+ElbowPlot(seurat.comb)
+
+```
+
+## Choosing community detection parameters and clustering cells.
+Finally, a graph-based clustering is used to cluster cells.  The top `r PCuse` PCs were used in clustering the cells. Care must be taken in setting the parameters of the Louvain algorithm-based community detection analysis, specifically the resolution parameter. In general, we will likely always somewhat over- or under- cluster cells. While the location of cells in the plots below are not affected by the resolution parameter, the number of clusters is.  Higher resolutions lead to more clusters. We ran the community detection algorithm with a number of resolution settings and then looked at clustering trees resulting from the chosen resolutions to select the setting that balances sensitivity with cluster stability.  If resolution is set too low, few clusters will be observed.  If resolution is set too high, cluster instability is observed by many low in-proportion edges.  Seurat recommends a resolution value between 0.6-1.2, but it is always a good idea to test multiple resolutions.  Here, resolutions of 0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9,1.0, 1.1, 1.2, and 1.3 were used.  It seems here that `r res` is the optimal resolution. In analyses using resolutions less than `r res`, clusters are split into further clusters, with relatively high proportions of cells splitting off.  However starting with the jump to resolution of `r res+0.1`, clusters become more unstable.  Note, however that we can easily change the resolution setting if desired - this is somewhat of an art and in this case, it is hard to say which resolution setting is ideal (in some projects this is quite obvious).  It will likely be more clear which resolution setting to choose when we combine across sample groups. 
+
+```{r clustree, echo=FALSE, message=FALSE, warning=FALSE, fig.align="center", fig.width=8, fig.height=6,fig.cap= "**Figure 2.  Clustering tree plot.**"}
+#seurat.comb <- RunUMAP(seurat.comb,reduction="pca",dims=1:PCuse)
+#seurat.comb <- FindNeighbors(
+#  seurat.comb,
+#  dims = 1:PCuse)
+
+#fortree <- seurat.comb
+#res.vec <- seq(0,1.3,0.1)
+#for (r in res.vec){
+#fortree <- FindClusters(
+#  fortree, 
+#  resolution = r)
+#}
+#saveRDS(fortree,"seurat_for_clustree.RDS")
+#fortree <- readRDS("seurat_for_clustree.RDS")
+#pdf("allCells_clusterTree.pdf",height=11,width=8)
+#clustree(fortree, assay="SCT",prefix="integrated_snn_res.")
+#dev.off()
+knitr::include_graphics("allCells_clusterTree.pdf")
+```
+
+
+```{r include=FALSE}
+
+#seurat.comb <- FindClusters(
+#  seurat.comb, 
+#  resolution = res)
+
+
+#saveRDS(seurat.comb,"all_combined.RDS")
+```
+
+```{r PCA0.3, echo=FALSE, warning=FALSE, fig.align="center", fig.width=8, fig.height=6,fig.cap= "**PCA plot of the combined clustering, with cells colored by detected clusters.**  "}
+
+#make figs for paper
+#png(filename="sample_umap.png", width=10, height=8,units='in',res=600)
+#DimPlot(seurat.comb, reduction = "umap", group.by = "orig.ident")
+#dev.off()
+
+#png(filename="umap.png", width=10, height=8,units='in',res=600)
+#DimPlot(seurat.comb, reduction = "umap")
+#dev.off()
+
+#png(filename="umap_labeled.png", width=10, height=8,units='in',res=600)
+#DimPlot(seurat.comb, reduction = "umap",label=TRUE)
+#dev.off()
+
+#g <- FeaturePlot(
+#    seurat.comb, features = "TNFRSF1A", 
+#    order = TRUE,
+#    cols = viridis::viridis(7, direction = -1))
+#ggsave(plot = g, "genePlots_TNFRSF1A.png", width = 10, height = 8, units='in' ,dpi=600)
+
+#g <- FeaturePlot(
+#    seurat.comb, features = "EPCAM", 
+#    order = TRUE,
+#    cols = viridis::magma(7, direction = -1))
+#ggsave(plot = g, "genePlots_EPCAM_magma.png", width = 10, height = 8, units='in' ,dpi=600)
+
+#g <- VlnPlot(
+#    seurat.comb, features = "PTPRC")
+#ggsave(plot = g, "VlnPlot_PTPRC.png", width = 10, height = 8, units='in' ,dpi=600)
+#p <- VlnPlot(
+#    seurat.comb, features = "PTPRC", pt.size = 0)
+#ggsave(plot = p, "VlnPlot_noPoints_PTPRC.png", width = 10, height = 8, units='in' ,dpi=600)
+#gp <- g+ggtitle("EPCAM")
+#g$data$TNFRSF1B <- rep(0,length(g$data$TNFRSF1A))
+#p$data$TNFRSF1B <- rep(0,length(p$data$TNFRSF1B))
+#pp <- p+ggtitle("EPCAM")
+
+#ggsave(plot = pp, "VlnPlot_noPoints_EPCAM.png", width = 10, height = 8, units='in' ,dpi=600)
+
+DimPlot(
+  seurat.comb,
+  reduction = "pca")
+```
+
+```{r UMAP0.3, echo=FALSE, warning=FALSE, fig.align="center", fig.width=8, fig.height=6,fig.cap= "**UMAP plot, with cells colored by detected clusters.**  UMAP is a newer visualization technique for high dimensional datasets and uses graph layout algorithms to embed data in a low-dimensional space and is capable of doing a fairly good job at preserving global data structures."}
+
+DimPlot(
+  seurat.comb,
+  reduction = "umap")
+```
+
+
+```{r numberedUMAPplot, echo=FALSE, message=FALSE, warning=FALSE, fig.align="center", fig.width=8, fig.height=6,fig.cap= "**Numbered UMAP Plot.**"}
+DimPlot(seurat.comb, reduction = "umap",  label=TRUE)
+```
+
+
+```{r UMAPplotsplit, echo=FALSE, warning=FALSE, message=FALSE, fig.align="center", fig.width=8, fig.height=6,fig.cap= "**UMAP Plot colored by condition.**"}
+#meta <- data.frame(seurat.comb@meta.data)
+#seurat.comb@meta.data[["Condition"]]  <- gsub("(.*)_.*","\\1",seurat.comb@meta.data$orig.ident)
+
+DimPlot(
+  seurat.comb,
+  reduction = "umap",group.by = 'orig.ident')
+```
+
+
+
+```{r numberedUMAPplotsplit, echo=FALSE, message=FALSE, warning=FALSE, fig.align="center", fig.width=48, fig.height=6,fig.cap= "**Numbered UMAP Plot split by condition.**"}
+DimPlot(seurat.comb, reduction = "umap", split.by="orig.ident")
+```
+
+
+# Visualize protein markers
+```{r citeSeq, echo=FALSE, warning=FALSE, fig.align="center", fig.width=8, fig.height=6,fig.cap= "**Dot Plot Protein Marker Visualization"}
+citeseq_markers.comb <- paste0(seurat.comb@assays$ADT@key, rownames(seurat.comb@assays$ADT@data))
+DefaultAssay(seurat.comb) <- "ADT"
+#seurat.comb <- NormalizeData(seurat.comb, normalization.method = "CLR", margin=2)
+#seurat_obj <- ScaleData(seurat.comb, assay = "ADT")
+citeseq_markers.comb %>% DotPlot(seurat.comb, features = .) + Seurat::RotatedAxis()
+#for (i in 1:length(citeseq_markers.comb)){
+# g<- FeaturePlot(seurat.comb, features=citeseq_markers.comb[i])
+# filename <- paste0("featurePlot_cite_seq",citeseq_markers.comb[i],".png")
+# ggsave(plot = g, filename=filename, width = 10, height = 8, units='in' ,dpi=600)
+# f<- RidgePlot(seurat.comb, features=citeseq_markers.comb[i])
+# filename2 <- paste0("ridgePlot_cite_seq",citeseq_markers.comb[i],".png")
+# ggsave(plot = f, filename=filename2, width = 8, height = 8, units='in' ,dpi=600)
+# v <- VlnPlot(seurat.comb, features=citeseq_markers.comb[i],pt.size = 0)
+# filename3 <- paste0("violinPlot_cite_seq_noPoints_",citeseq_markers.comb[i],".png")
+# ggsave(plot = v, filename=filename3, width = 10, height = 8, units='in' ,dpi=600)
+#}
+
+
+```
+
+```{r citeSeq5, echo=FALSE, fig.align="center", fig.cap=, fig.height=30, fig.width=6, warning=FALSE,fig.cap= "**Feature Plot Protein Marker Visualization with points"}
+citeseq_markers.comb %>% FeaturePlot(seurat.comb, features=.,ncol=2)
+```
+
+```{r citeSeq22, echo=FALSE, warning=FALSE, fig.align="center", fig.width=8, fig.height=35,fig.cap= "**Violin Plot Protein Marker Visualization without points"}
+
+citeseq_markers.comb %>% VlnPlot(seurat.comb, features=.,ncol=2,pt.size = 0)
+
+```
+
+```{r citeSeq3, echo=FALSE, warning=FALSE, fig.align="center", fig.width=8, fig.height=35,fig.cap= "**Violin Plot Protein Marker Visualization with points"}
+
+citeseq_markers.comb %>% VlnPlot(seurat.comb, features=.,ncol=2)
+
+
+```
+
+```{r citeSeq2, echo=FALSE, warning=FALSE, fig.align="center", fig.width=8, fig.height=40,fig.cap= "**Ridge Plot Protein Marker Visualization without points"}
+
+citeseq_markers.comb %>% RidgePlot(seurat.comb, features=.,ncol=2,)
+
+DefaultAssay(seurat.comb) <- "integrated"
+
+#saveRDS(seurat.comb,"all_combined.RDS")
+```
+
+# Identify cluster biomarkers
+
+Cluster biomarkers are those genes that distinguish clusters from one another.  They are identified by performing a differential expression analysis between a given cluster X and all other cells.  For example, cluster biomarkers for cluster 0 are those genes that are differentially expressed between the cells in cluster 0 and all other cells from other clusters.
+
+Cluster biomarkers were identified using a wilcoxon test which had an adjusted p-value < 0.01.  Only markers which had a logFC > 0.25 and were expressed in one cluster in at lease 10% of the cells of that cluster were returned.  Both up-regulated and down-regulated markers were identified.  All markers are in the file **`r seurat.comb@project.name`_allmarkers.csv**.  Be sure to check adjusted p-values of markers to determine statistical significance.
+```{r include=FALSE}
+#seurat.obj.markers <- FindAllMarkers(
+#  seurat.comb, 
+#  only.pos = FALSE, 
+#  min.pct = 0.1, 
+#  logfc.threshold = 0.25,
+#  return.thresh = 0.01)
+usefile <- paste(seurat.comb@project.name,"_allmarkers_use.RDS", sep="")
+#write.csv(seurat.obj.markers, file = paste(seurat.comb@project.name,"_allmarkers.csv", sep=""))
+#saveRDS(seurat.obj.markers,file=usefile)
+seurat.obj.markers <- readRDS(usefile)
+top10 <- seurat.obj.markers %>% group_by(cluster) %>% top_n(n = 10, wt = avg_logFC)
+top5 <- seurat.obj.markers %>% group_by(cluster) %>% top_n(n = 5, wt = avg_logFC)
+```
+
+### Top 2 Biomarkers in Each Cluster
+```{r include=FALSE}
+top2 <- seurat.obj.markers %>% group_by(cluster) %>% top_n(n = 2, wt = avg_logFC)
+markerGenes <- unique(seurat.obj.markers$gene)
+markerGenes_top2 <- unique(top2$gene)
+clusters <- unique(seurat.obj.markers$cluster)
+
+dfout <- data.frame(matrix(data=NA,nrow=length(markerGenes),ncol=2*(length(clusters))))
+
+dfout_top2 <- data.frame(matrix(,nrow=length(markerGenes_top2),ncol=2*(length(clusters))))
+
+rownames(dfout) <- markerGenes
+rownames(dfout_top2) <- markerGenes_top2
+statCols <- c()
+index1 <- 1
+for (i in 1:length(clusters)-1){
+  statCols[index1] <- paste0("logFC_",i)
+  index1 <- index1 +1
+  statCols[index1] <- paste0("padj_",i)
+  index1 <- index1+1
+}
+colnames(dfout) <- statCols
+colnames(dfout_top2) <- statCols
+
+isEmpty <- function(x) {
+  return(length(x)==0)
+}
+
+for(i in 1:length(rownames(dfout))){
+    gene <- rownames(dfout[i,])
+    for(j in 1:length(clusters)-1){
+      fc<- paste0("logFC_",j)
+      pval <- paste0("padj_",j)
+      if(isEmpty(seurat.obj.markers$avg_logFC[which(seurat.obj.markers$gene==gene & seurat.obj.markers$cluster==j)])){
+        dfout[gene,fc]<- "NA"
+        dfout[gene,pval]<- "NA" 
+      } else{
+        dfout[gene,fc]<-   seurat.obj.markers$avg_logFC[which(seurat.obj.markers$gene==gene & seurat.obj.markers$cluster==j)]
+        dfout[gene,pval]<-   seurat.obj.markers$p_val_adj[which(seurat.obj.markers$gene==gene & seurat.obj.markers$cluster==j)]
+      }
+    }
+
+}
+topMarkerTable <- paste0(projectname,"_MarkerTable_formatted.csv")
+write.csv(dfout,topMarkerTable)
+#fill top2 table
+for(i in 1:length(rownames(dfout_top2))){
+    gene <- rownames(dfout_top2[i,])
+    for(j in 1:length(clusters)-1){
+      fc<- paste0("logFC_",j)
+      pval <- paste0("padj_",j)
+      if(isEmpty(seurat.obj.markers$avg_logFC[which(seurat.obj.markers$gene==gene & seurat.obj.markers$cluster==j)])){
+        dfout_top2[gene,fc]<- "NA"
+        dfout_top2[gene,pval]<- "NA" 
+      } else{
+        dfout_top2[gene,fc]<-   round(seurat.obj.markers$avg_logFC[which(seurat.obj.markers$gene==gene & seurat.obj.markers$cluster==j)],digits = 3)
+        dfout_top2[gene,pval]<-   signif(seurat.obj.markers$p_val_adj[which(seurat.obj.markers$gene==gene & seurat.obj.markers$cluster==j)],digits=3)
+      }
+    }
+
+}
+
+
+
+```
+
+```{r set-options,echo=FALSE, warning=FALSE, message=FALSE}
+options(width='800')
+DT::datatable(dfout_top2,fillContainer=TRUE, class=c('cell-border stripe'),options = list(autoWidth=TRUE, scrollY='700px',pageLength=10,scrollX=TRUE),
+              caption = 'Top 2 Marker Genes in Each Cluster. Marker genes that were not expressed in 0.1% of cells in a given cluster or had less that 0.25 logfc show
+            NA in cells.') %>% DT::formatStyle(names(dfout_top2),height=50,fontSize='90%',lineHeight='40%')
+```
+
+## Visualization of Cluster Markers
+
+
+```{r findmarkersHeatmap, echo=FALSE, warning=FALSE, fig.align="center", fig.width=20, fig.height=15,fig.cap= "**Heatmap of top markers.** Only statistically significant markers are shown (p-value <0.01).  Genes are ordered according to fold-change of the marker in the given cluster compared to all other clusters.  Yellow indicates high expression, black indicates median expression and purple indicates a low level of expression."}
+
+DoHeatmap(subset(seurat.comb, downsample=100), features = top5$gene,label=F) +NoLegend()
+#plot.cc <- DoHeatmap(combined.integrated, features=top10$gene) + NoLegend()
+#ggplot2::ggsave(filename="ClusterMarkerHeatmap.pdf", plot= plot.cc,units="in",height=15,width=20)
+
+#knitr::include_graphics("ClusterMarkerHeatmap.pdf")
+
+```
+
+```{r markerDotplot, echo=FALSE, warning=FALSE, fig.align="center", fig.height=6, fig.width=20,fig.cap= "**Dotplot of top markers in each cluster.** Only statistically significant markers are shown (p-value <0.01).  Genes are ordered according to fold-change of the marker in the given cluster compared to all other clusters and the top 4 are selected for each. The color of the dots represents the average expression level and the size of the dot corresponds to the percentage of cells in that cluster which express the feature."}
+seurat.obj.markers %>% 
+    group_by(cluster) %>% 
+    dplyr::top_n(n = 4, wt = avg_logFC) %>% 
+    .$gene %>% unique() %>%
+
+DotPlot(seurat.comb, features = .) + Seurat::RotatedAxis()
+```
+
+```{r markerViolin,  echo=FALSE, warning=FALSE, fig.align="center", fig.width=11, fig.height=23,fig.cap= "**Cluster marker violin plots for top gene in each cluster.**  Clusters are shown on x-axis and normalized expression level is shown on the y-axis."}
+
+seurat.obj.markers %>% 
+    group_by(cluster) %>% 
+    dplyr::top_n(n = 1, wt = avg_logFC) %>% 
+    .$gene %>% unique() %>%
+
+VlnPlot(seurat.comb,features = ., ncol = 2,pt.size = 0)
+```
+
+```{r markerUMAP,  echo=FALSE, warning=FALSE, fig.align="center", fig.width=8, fig.height=25,fig.cap= "**Cluster marker UMAP plots for top gene in each cluster.**  UMAP plots are shown with expression of the top marker gene in each cluster shown in purple."}
+
+seurat.obj.markers %>% 
+    group_by(cluster) %>% 
+    dplyr::top_n(n = 1, wt = avg_logFC) %>% 
+    .$gene %>% unique() %>%
+
+FeaturePlot(seurat.comb,features = ., ncol = 2)
+```
+
+## Enrichment Analysis of cluster biomarkers
+### KEGG pathways that are enriched in cluster biomarkers
+
+Marker genes that differed in expression between clusters were used as input into an enrichment analysis.  Here, enriched KEGG pathways are identified from the cluster markers.  Dot plots of the top enrichment results (ranked by p-value) are shown of the top enriched KEGG pathways for each cluster.  Points are colored by p-value, Count (the number of marker genes in a particular KEGG pathway) is shown as point size and is and gene ratio (Count divided by the total number of genes in the KEGG pathway) is on the x-axis.
+
+```{r include=FALSE}
+library(clusterProfiler)
+library(org.Hs.eg.db)
+library(biomaRt)
+
+#listMarts()
+#choose ensembl dataset and filters to use
+#ensembl=useMart(biomart="ENSEMBL_MART_ENSEMBL",host="www.ensembl.org",dataset="hsapiens_gene_ensembl")
+
+#ensembl = useEnsembl(biomart = "ensembl",dataset="hsapiens_gene_ensembl", mirror = "useast")
+#ensembl = useEnsembl(biomart = "ensembl",dataset="hsapiens_gene_ensembl")
+#filters = listFilters(ensembl)
+#filters[1:5,]
+#attributes = listAttributes(ensembl)
+#attributes[1:15,]
+#filterOptions("Gene_ID",ensembl)
+#background <-data.frame(rownames(seurat.comb@assays$RNA))
+#colnames(background) <- "gene"
+Anno <- read.table("/depot-old/pccr/data/core_data/Annotations/Human_20FEB2020.txt", sep="\t",
+                   stringsAsFactors = F,header=TRUE, quote="")
+get_annotations <- function(degs){
+    #annot <- getBM(attributes=c('Gene_ID','hgnc_symbol','entrezgene_id','description','external_gene_name','chromosome_name','start_position','end_position','strand'), filters='hgnc_symbol', values=degs$gene, mart=ensembl)
+    deg_annot = merge(x = degs, y = Anno, by.x="gene",by.y='Gene.name',all.x=TRUE)
+    return(deg_annot)
+}
+#background.anno <- get_annotations(background)
+cnum <- (length(levels(Idents(seurat.comb)))-1)
+spl.mark <- split(seurat.obj.markers, seurat.obj.markers$cluster)
+names(spl.mark) <- paste("c",0:cnum, sep="")
+
+for (i in 0:cnum){
+  j <- i+1
+  nam <- paste("c",i,sep="")
+  assign(nam,spl.mark[[j]] )
+}
+
+#get statistically significant markers and annotate
+for (i in 0:cnum) {
+  nam <- paste("deg.c",i,sep="")
+  prevnam <- paste("c",i,sep="")
+  prevdata <- (get(prevnam))
+  assign(nam, prevdata[prevdata$p_val_adj< 0.01,])
+  annonam <- paste("Anno.deg.c",i,sep="")
+  annogene <- paste("genes.c",i,sep="")
+  annogene <- data.frame(get(nam)["gene"])
+  assign(annonam,get_annotations(annogene["gene"]))
+}
+
+gene.df.0 <- bitr(Anno.deg.c0$Gene_ID, fromType = "ENSEMBL", toType = ("ENTREZID"), OrgDb = org.Hs.eg.db)
+gene.df.1 <- bitr(Anno.deg.c1$Gene_ID, fromType = "ENSEMBL", toType = ("ENTREZID"), OrgDb = org.Hs.eg.db)
+gene.df.2 <- bitr(Anno.deg.c2$Gene_ID, fromType = "ENSEMBL", toType = ("ENTREZID"), OrgDb = org.Hs.eg.db)
+gene.df.3 <- bitr(Anno.deg.c3$Gene_ID, fromType = "ENSEMBL", toType = ("ENTREZID"), OrgDb = org.Hs.eg.db)
+gene.df.4 <- bitr(Anno.deg.c4$Gene_ID, fromType = "ENSEMBL", toType = ("ENTREZID"), OrgDb = org.Hs.eg.db)
+gene.df.5 <- bitr(Anno.deg.c5$Gene_ID, fromType = "ENSEMBL", toType = ("ENTREZID"), OrgDb = org.Hs.eg.db)
+gene.df.6 <- bitr(Anno.deg.c6$Gene_ID, fromType = "ENSEMBL", toType = ("ENTREZID"), OrgDb = org.Hs.eg.db)
+gene.df.7 <- bitr(Anno.deg.c7$Gene_ID, fromType = "ENSEMBL", toType = ("ENTREZID"), OrgDb = org.Hs.eg.db)
+gene.df.8 <- bitr(Anno.deg.c8$Gene_ID, fromType = "ENSEMBL", toType = ("ENTREZID"), OrgDb = org.Hs.eg.db)
+gene.df.9 <- bitr(Anno.deg.c9$Gene_ID, fromType = "ENSEMBL", toType = ("ENTREZID"), OrgDb = org.Hs.eg.db)
+gene.df.10 <- bitr(Anno.deg.c10$Gene_ID, fromType = "ENSEMBL", toType = ("ENTREZID"), OrgDb = org.Hs.eg.db)
+gene.df.11 <- bitr(Anno.deg.c11$Gene_ID, fromType = "ENSEMBL", toType = ("ENTREZID"), OrgDb = org.Hs.eg.db)
+gene.df.12 <- bitr(Anno.deg.c12$Gene_ID, fromType = "ENSEMBL", toType = ("ENTREZID"), OrgDb = org.Hs.eg.db)
+gene.df.13 <- bitr(Anno.deg.c13$Gene_ID, fromType = "ENSEMBL", toType = ("ENTREZID"), OrgDb = org.Hs.eg.db)
+gene.df.14 <- bitr(Anno.deg.c14$Gene_ID, fromType = "ENSEMBL", toType = ("ENTREZID"), OrgDb = org.Hs.eg.db)
+gene.df.15 <- bitr(Anno.deg.c15$Gene_ID, fromType = "ENSEMBL", toType = ("ENTREZID"), OrgDb = org.Hs.eg.db)
+gene.df.16 <- bitr(Anno.deg.c16$Gene_ID, fromType = "ENSEMBL", toType = ("ENTREZID"), OrgDb = org.Hs.eg.db)
+gene.df.17 <- bitr(Anno.deg.c17$Gene_ID, fromType = "ENSEMBL", toType = ("ENTREZID"), OrgDb = org.Hs.eg.db)
+
+```
+
+```{r getUniprot,  echo=FALSE, warning=FALSE, fig.align="center", fig.width=8, fig.height=8,}
+
+dir.create("KEGG_res")
+kk.0 <- enrichKEGG(gene=gene.df.0$ENTREZID,
+                    organism='hsa',
+                    pAdjustMethod = 'BH',
+                    pvalueCutoff = 0.05,
+                  )
+kk.0 <- setReadable(kk.0, 'org.Hs.eg.db', "ENTREZID")
+write.csv(kk.0,file="KEGG_res/c0.csv")
+dotplot(kk.0, showCategory = 30) + ggtitle("Cluster 0")
+
+kk.1 <- enrichKEGG(gene=gene.df.1$ENTREZID,
+                    organism='hsa',
+                    pAdjustMethod = 'BH',
+                    pvalueCutoff = 0.05
+                  )
+kk.1 <- setReadable(kk.1, 'org.Hs.eg.db',"ENTREZID")
+write.csv(kk.1,file="KEGG_res/c1.csv")
+dotplot(kk.1, showCategory = 30) + ggtitle("Cluster 1")
+kk.2 <- enrichKEGG(gene=gene.df.2$ENTREZID,
+                    organism='hsa',
+                    pAdjustMethod = 'BH',
+                    pvalueCutoff = 0.05
+                  )
+kk.2 <- setReadable(kk.2, 'org.Hs.eg.db', "ENTREZID")
+write.csv(kk.2,file="KEGG_res/c2.csv")
+dotplot(kk.2, showCategory = 30) + ggtitle("Cluster 2")
+kk.3 <- enrichKEGG(gene=gene.df.3$ENTREZID,
+                    organism='hsa',
+                    pAdjustMethod = 'BH',
+                    pvalueCutoff = 0.05
+                  )
+kk.3 <- setReadable(kk.3, 'org.Hs.eg.db', "ENTREZID")
+write.csv(kk.3,file="KEGG_res/c3.csv")
+dotplot(kk.3, showCategory = 30) + ggtitle("Cluster 3")
+kk.4 <- enrichKEGG(gene=gene.df.4$ENTREZID,
+                    organism='hsa',
+                    pAdjustMethod = 'BH',
+                    pvalueCutoff = 0.05
+                  )
+kk.4 <- setReadable(kk.4, 'org.Hs.eg.db', "ENTREZID")
+write.csv(kk.4,file="KEGG_res/c4.csv")
+dotplot(kk.4, showCategory = 30) + ggtitle("Cluster 4")
+kk.5 <- enrichKEGG(gene=gene.df.5$ENTREZID,
+                    organism='hsa',
+                    pAdjustMethod = 'BH',
+                    pvalueCutoff = 0.05
+                  )
+kk.5 <- setReadable(kk.5, 'org.Hs.eg.db', "ENTREZID")
+write.csv(kk.5,file="KEGG_res/c5.csv")
+dotplot(kk.5, showCategory = 30) + ggtitle("Cluster 5")
+kk.6 <- enrichKEGG(gene=gene.df.6$ENTREZID,
+                    organism='hsa',
+                    pAdjustMethod = 'BH',
+                    pvalueCutoff = 0.05
+                  )
+kk.6 <- setReadable(kk.6, 'org.Hs.eg.db', "ENTREZID")
+write.csv(kk.6,file="KEGG_res/c6.csv")
+dotplot(kk.6, showCategory = 30) + ggtitle("Cluster 6")
+kk.7 <- enrichKEGG(gene=gene.df.7$ENTREZID,
+                    organism='hsa',
+                    pAdjustMethod = 'BH',
+                    pvalueCutoff = 0.05
+                  )
+kk.7 <- setReadable(kk.7, 'org.Hs.eg.db', "ENTREZID")
+write.csv(kk.7,file="KEGG_res/c7.csv")
+dotplot(kk.7, showCategory = 30) + ggtitle("Cluster 7")
+kk.8 <- enrichKEGG(gene=gene.df.8$ENTREZID,
+                    organism='hsa',
+                    pAdjustMethod = 'BH',
+                    pvalueCutoff = 0.05
+                  )
+kk.8 <- setReadable(kk.8, 'org.Hs.eg.db', "ENTREZID")
+write.csv(kk.8,file="KEGG_res/c8.csv")
+dotplot(kk.8, showCategory = 30) + ggtitle("Cluster 8")
+kk.9 <- enrichKEGG(gene=gene.df.9$ENTREZID,
+                    organism='hsa',
+                    pAdjustMethod = 'BH',
+                    pvalueCutoff = 0.05
+                  )
+kk.9 <- setReadable(kk.9, 'org.Hs.eg.db', "ENTREZID")
+write.csv(kk.9,file="KEGG_res/c9.csv")
+dotplot(kk.9, showCategory = 30) + ggtitle("Cluster 9")
+kk.10 <- enrichKEGG(gene=gene.df.10$ENTREZID,
+                    organism='hsa',
+                    pAdjustMethod = 'BH',
+                    pvalueCutoff = 0.05
+                  )
+kk.10 <- setReadable(kk.10, 'org.Hs.eg.db', "ENTREZID")
+write.csv(kk.10,file="KEGG_res/c10.csv")
+dotplot(kk.10, showCategory = 30) + ggtitle("Cluster 10")
+kk.11 <- enrichKEGG(gene=gene.df.11$ENTREZID,
+                    organism='hsa',
+                    pAdjustMethod = 'BH',
+                    pvalueCutoff = 0.05
+                  )
+kk.11 <- setReadable(kk.11, 'org.Hs.eg.db', "ENTREZID")
+write.csv(kk.11,file="KEGG_res/c11.csv")
+dotplot(kk.11, showCategory = 30) + ggtitle("Cluster 11")
+kk.12 <- enrichKEGG(gene=gene.df.12$ENTREZID,
+                    organism='hsa',
+                    pAdjustMethod = 'BH',
+                    pvalueCutoff = 0.05
+                  )
+kk.12 <- setReadable(kk.12, 'org.Hs.eg.db', "ENTREZID")
+write.csv(kk.12,file="KEGG_res/c12.csv")
+dotplot(kk.12, showCategory = 30) + ggtitle("Cluster 12")
+kk.13 <- enrichKEGG(gene=gene.df.13$ENTREZID,
+                    organism='hsa',
+                    pAdjustMethod = 'BH',
+                    pvalueCutoff = 0.05
+                  )
+kk.13 <- setReadable(kk.13, 'org.Hs.eg.db', "ENTREZID")
+write.csv(kk.13,file="KEGG_res/c13.csv")
+dotplot(kk.13, showCategory = 30) + ggtitle("Cluster 13")
+
+kk.14 <- enrichKEGG(gene=gene.df.14$ENTREZID,
+                    organism='hsa',
+                    pAdjustMethod = 'BH',
+                    pvalueCutoff = 0.05
+                  )
+kk.14 <- setReadable(kk.14, 'org.Hs.eg.db', "ENTREZID")
+write.csv(kk.14,file="KEGG_res/c14.csv")
+dotplot(kk.14, showCategory = 30) + ggtitle("Cluster 14")
+kk.15 <- enrichKEGG(gene=gene.df.15$ENTREZID,
+                    organism='hsa',
+                    pAdjustMethod = 'BH',
+                    pvalueCutoff = 0.05
+                  )
+kk.15 <- setReadable(kk.15, 'org.Hs.eg.db', "ENTREZID")
+write.csv(kk.15,file="KEGG_res/c15.csv")
+dotplot(kk.15, showCategory = 30) + ggtitle("Cluster 15")
+kk.16 <- enrichKEGG(gene=gene.df.16$ENTREZID,
+                    organism='hsa',
+                    pAdjustMethod = 'BH',
+                    pvalueCutoff = 0.05
+                  )
+kk.16 <- setReadable(kk.16, 'org.Hs.eg.db', "ENTREZID")
+write.csv(kk.16,file="KEGG_res/c16.csv")
+dotplot(kk.16, showCategory = 30) + ggtitle("Cluster 16")
+kk.17 <- enrichKEGG(gene=gene.df.17$ENTREZID,
+                    organism='hsa',
+                    pAdjustMethod = 'BH',
+                    pvalueCutoff = 0.05
+                  )
+kk.17 <- setReadable(kk.17, 'org.Hs.eg.db', "ENTREZID")
+write.csv(kk.17,file="KEGG_res/c17.csv")
+dotplot(kk.17, showCategory = 30) + ggtitle("Cluster 17")
+
+```
+
+### Reactome pathways that are enriched in cluster biomarkers
+```{r reactome, echo=FALSE, warning=FALSE, fig.align="center", fig.width=16, fig.height=8}
+library("ReactomePA")
+dir.create("reactome_res")
+rr0 <- enrichPathway(gene         = gene.df.0$ENTREZID,
+                     organism     = "human",
+                     pAdjustMethod = "BH",
+                     pvalueCutoff  = 0.05,
+                     qvalueCutoff = 0.05,
+                     minGSSize = 5,
+                     readable = TRUE)
+   write.csv(rr0, file = "reactome_res/c0.csv")
+   dotplot(rr0)+ ggtitle("Cluster 0")
+   rr1 <- enrichPathway(gene         = gene.df.1$ENTREZID,
+                     organism     = "human",
+                     pAdjustMethod = "BH",
+                     pvalueCutoff  = 0.05,
+                     qvalueCutoff = 0.05,
+                     minGSSize = 5,
+                     readable = TRUE)
+   write.csv(rr1, file = "reactome_res/c1.csv")
+   dotplot(rr1)+ ggtitle("Cluster 1")
+rr2 <- enrichPathway(gene         = gene.df.2$ENTREZID,
+                     organism     = "human",
+                     pAdjustMethod = "BH",
+                     pvalueCutoff  = 0.05,
+                     qvalueCutoff = 0.05,
+                     minGSSize = 5,
+                     readable = TRUE)
+   write.csv(rr2, file = "reactome_res/c2.csv")
+   dotplot(rr2)+ ggtitle("Cluster 2")
+   rr3 <- enrichPathway(gene         = gene.df.3$ENTREZID,
+                     organism     = "human",
+                     pAdjustMethod = "BH",
+                     pvalueCutoff  = 0.05,
+                     qvalueCutoff = 0.05,
+                     minGSSize = 5,
+                     readable = TRUE)
+   write.csv(rr3, file = "reactome_res/c3.csv")
+   dotplot(rr3)+ ggtitle("Cluster 3")
+   rr4 <- enrichPathway(gene         = gene.df.4$ENTREZID,
+                     organism     = "human",
+                     pAdjustMethod = "BH",
+                     pvalueCutoff  = 0.05,
+                     qvalueCutoff = 0.05,
+                     minGSSize = 5,
+                     readable = TRUE)
+   write.csv(rr4, file = "reactome_res/c4.csv")
+   dotplot(rr4)+ ggtitle("Cluster 4")
+   rr5 <- enrichPathway(gene         = gene.df.5$ENTREZID,
+                     organism     = "human",
+                     pAdjustMethod = "BH",
+                     pvalueCutoff  = 0.05,
+                     qvalueCutoff = 0.05,
+                     minGSSize = 5,
+                     readable = TRUE)
+   write.csv(rr5, file = "reactome_res/c5.csv")
+   dotplot(rr5)+ ggtitle("Cluster 5")
+   rr6 <- enrichPathway(gene         = gene.df.6$ENTREZID,
+                     organism     = "human",
+                     pAdjustMethod = "BH",
+                     pvalueCutoff  = 0.05,
+                     qvalueCutoff = 0.05,
+                     minGSSize = 5,
+                     readable = TRUE)
+   write.csv(rr6, file = "reactome_res/c6.csv")
+   dotplot(rr6)+ ggtitle("Cluster 6")
+   rr7 <- enrichPathway(gene         = gene.df.7$ENTREZID,
+                     organism     = "human",
+                     pAdjustMethod = "BH",
+                     pvalueCutoff  = 0.05,
+                     qvalueCutoff = 0.05,
+                     minGSSize = 5,
+                     readable = TRUE)
+   write.csv(rr7, file = "reactome_res/c7.csv")
+   dotplot(rr7)+ ggtitle("Cluster 7")
+   rr8 <- enrichPathway(gene         = gene.df.8$ENTREZID,
+                     organism     = "human",
+                     pAdjustMethod = "BH",
+                     pvalueCutoff  = 0.05,
+                     qvalueCutoff = 0.05,
+                     minGSSize = 5,
+                     readable = TRUE)
+   write.csv(rr8, file = "reactome_res/c8.csv")
+   dotplot(rr8)+ ggtitle("Cluster 8")
+   rr9 <- enrichPathway(gene         = gene.df.9$ENTREZID,
+                     organism     = "human",
+                     pAdjustMethod = "BH",
+                     pvalueCutoff  = 0.05,
+                     qvalueCutoff = 0.05,
+                     minGSSize = 5,
+                     readable = TRUE)
+   write.csv(rr9, file = "reactome_res/c9.csv")
+   dotplot(rr9)+ ggtitle("Cluster 9")
+   rr10 <- enrichPathway(gene         = gene.df.10$ENTREZID,
+                     organism     = "human",
+                     pAdjustMethod = "BH",
+                     pvalueCutoff  = 0.05,
+                     qvalueCutoff = 0.05,
+                     minGSSize = 5,
+                     readable = TRUE)
+   write.csv(rr10, file = "reactome_res/c10.csv")
+   dotplot(rr10)+ ggtitle("Cluster 10")
+   rr11 <- enrichPathway(gene         = gene.df.11$ENTREZID,
+                     organism     = "human",
+                     pAdjustMethod = "BH",
+                     pvalueCutoff  = 0.05,
+                     qvalueCutoff = 0.05,
+                     minGSSize = 5,
+                     readable = TRUE)
+   write.csv(rr11, file = "reactome_res/c11.csv")
+   dotplot(rr11)+ ggtitle("Cluster 11")
+   rr12 <- enrichPathway(gene         = gene.df.12$ENTREZID,
+                     organism     = "human",
+                     pAdjustMethod = "BH",
+                     pvalueCutoff  = 0.05,
+                     qvalueCutoff = 0.05,
+                     minGSSize = 5,
+                     readable = TRUE)
+   write.csv(rr12, file = "reactome_res/c12.csv")
+   dotplot(rr12)+ ggtitle("Cluster 12")
+   rr13 <- enrichPathway(gene         = gene.df.13$ENTREZID,
+                     organism     = "human",
+                     pAdjustMethod = "BH",
+                     pvalueCutoff  = 0.05,
+                     qvalueCutoff = 0.05,
+                     minGSSize = 5,
+                     readable = TRUE)
+   write.csv(rr13, file = "reactome_res/c13.csv")
+   dotplot(rr13)+ ggtitle("Cluster 13")
+   rr14 <- enrichPathway(gene         = gene.df.14$ENTREZID,
+                     organism     = "human",
+                     pAdjustMethod = "BH",
+                     pvalueCutoff  = 0.05,
+                     qvalueCutoff = 0.05,
+                     minGSSize = 5,
+                     readable = TRUE)
+   write.csv(rr14, file = "reactome_res/c14.csv")
+   dotplot(rr14)+ ggtitle("Cluster 14")
+  rr15 <- enrichPathway(gene         = gene.df.15$ENTREZID,
+                     organism     = "human",
+                     pAdjustMethod = "BH",
+                     pvalueCutoff  = 0.05,
+                     qvalueCutoff = 0.05,
+                     minGSSize = 5,
+                     readable = TRUE)
+   write.csv(rr15, file = "reactome_res/c15.csv")
+   dotplot(rr15)+ ggtitle("Cluster 15")
+   rr16 <- enrichPathway(gene         = gene.df.16$ENTREZID,
+                     organism     = "human",
+                     pAdjustMethod = "BH",
+                     pvalueCutoff  = 0.05,
+                     qvalueCutoff = 0.05,
+                     minGSSize = 5,
+                     readable = TRUE)
+   write.csv(rr16, file = "reactome_res/c16.csv")
+   dotplot(rr16)+ ggtitle("Cluster 16")
+   rr17 <- enrichPathway(gene         = gene.df.17$ENTREZID,
+                     organism     = "human",
+                     pAdjustMethod = "BH",
+                     pvalueCutoff  = 0.05,
+                     qvalueCutoff = 0.05,
+                     minGSSize = 5,
+                     readable = TRUE)
+   write.csv(rr17, file = "reactome_res/c17.csv")
+   dotplot(rr17)+ ggtitle("Cluster 17")
+   
+```
+
+
+
+### Cellular Component GO terms which are enriched in cluster biomarkers
+
+Barplots are shown of the top enriched cellular component term for each cluster, with the y-axis showing the GO term, the bars colored by p-value, and the x-axis shows the Count (genes that are associated with a particular GO term).
+```{r CC,  echo=FALSE, warning=FALSE, fig.align="center", fig.width=16, fig.height=8,}
+dir.create("CC_res")
+cc.go.0 <- enrichGO(gene= gene.df.0$ENTREZID,
+                      pAdjustMethod = 'BH',
+                      pvalueCutoff = 0.05,
+                      OrgDb = org.Hs.eg.db,
+                      ont="CC",
+                      readable = TRUE)
+barplot(cc.go.0, showCategory = 20) +  ggtitle("Cluster 0")
+write.csv(cc.go.0, file = "CC_res/c0.csv")
+cc.go.1 <- enrichGO(gene= gene.df.1$ENTREZID,
+                      pAdjustMethod = 'BH',
+                      pvalueCutoff = 0.05,
+                      OrgDb = org.Hs.eg.db,
+                      ont="CC",
+                      readable = TRUE)
+barplot(cc.go.1, showCategory = 20) +  ggtitle("Cluster 1")
+write.csv(cc.go.1, file = "CC_res/c1.csv")
+cc.go.2 <- enrichGO(gene= gene.df.2$ENTREZID,
+                      pAdjustMethod = 'BH',
+                      pvalueCutoff = 0.05,
+                      OrgDb = org.Hs.eg.db,
+                      ont="CC",
+                      readable = TRUE)
+barplot(cc.go.2, showCategory = 20) +  ggtitle("Cluster 2")
+write.csv(cc.go.2, file = "CC_res/c2.csv")
+cc.go.3 <- enrichGO(gene= gene.df.3$ENTREZID,
+                      pAdjustMethod = 'BH',
+                      pvalueCutoff = 0.05,
+                      OrgDb = org.Hs.eg.db,
+                      ont="CC",
+                      readable = TRUE)
+barplot(cc.go.3, showCategory = 20) +  ggtitle("Cluster 3")
+write.csv(cc.go.3, file = "CC_res/c3.csv")
+
+cc.go.4 <- enrichGO(gene= gene.df.4$ENTREZID,
+                      pAdjustMethod = 'BH',
+                      pvalueCutoff = 0.05,
+                      OrgDb = org.Hs.eg.db,
+                      ont="CC",
+                      readable = TRUE)
+barplot(cc.go.4, showCategory = 20) +  ggtitle("Cluster 4")
+write.csv(cc.go.4, file = "CC_res/c4.csv")
+cc.go.5 <- enrichGO(gene= gene.df.5$ENTREZID,
+                      pAdjustMethod = 'BH',
+                      pvalueCutoff = 0.05,
+                      OrgDb = org.Hs.eg.db,
+                      ont="CC",
+                      readable = TRUE)
+barplot(cc.go.5, showCategory = 20) +  ggtitle("Cluster 5")
+write.csv(cc.go.5, file = "CC_res/c5.csv")
+
+cc.go.6 <- enrichGO(gene= gene.df.6$ENTREZID,
+                      pAdjustMethod = 'BH',
+                      pvalueCutoff = 0.05,
+                      OrgDb = org.Hs.eg.db,
+                      ont="CC",
+                      readable = TRUE)
+barplot(cc.go.6, showCategory = 20) +  ggtitle("Cluster 6")
+write.csv(cc.go.6, file = "CC_res/c6.csv")
+cc.go.7 <- enrichGO(gene= gene.df.7$ENTREZID,
+                      pAdjustMethod = 'BH',
+                      pvalueCutoff = 0.05,
+                      OrgDb = org.Hs.eg.db,
+                      ont="CC",
+                      readable = TRUE)
+barplot(cc.go.7, showCategory = 20) +  ggtitle("Cluster 7")
+write.csv(cc.go.7, file = "CC_res/c7.csv")
+cc.go.8 <- enrichGO(gene= gene.df.8$ENTREZID,
+                      pAdjustMethod = 'BH',
+                      pvalueCutoff = 0.05,
+                      OrgDb = org.Hs.eg.db,
+                      ont="CC",
+                      readable = TRUE)
+barplot(cc.go.8, showCategory = 20) +  ggtitle("Cluster 8")
+write.csv(cc.go.8, file = "CC_res/c8.csv")
+cc.go.9 <- enrichGO(gene= gene.df.9$ENTREZID,
+                      pAdjustMethod = 'BH',
+                      pvalueCutoff = 0.05,
+                      OrgDb = org.Hs.eg.db,
+                      ont="CC",
+                      readable = TRUE)
+barplot(cc.go.9, showCategory = 20) +  ggtitle("Cluster 9")
+write.csv(cc.go.9, file = "CC_res/c9.csv")
+
+cc.go.10 <- enrichGO(gene= gene.df.10$ENTREZID,
+                      pAdjustMethod = 'BH',
+                      pvalueCutoff = 0.05,
+                      OrgDb = org.Hs.eg.db,
+                      ont="CC",
+                      readable = TRUE)
+barplot(cc.go.10, showCategory = 20) +  ggtitle("Cluster 10")
+write.csv(cc.go.10, file = "CC_res/c10.csv")
+
+cc.go.11 <- enrichGO(gene= gene.df.11$ENTREZID,
+                      pAdjustMethod = 'BH',
+                      pvalueCutoff = 0.05,
+                      OrgDb = org.Hs.eg.db,
+                      ont="CC",
+                      readable = TRUE)
+barplot(cc.go.11, showCategory = 20) +  ggtitle("Cluster 11")
+write.csv(cc.go.11, file = "CC_res/c11.csv")
+cc.go.12 <- enrichGO(gene= gene.df.12$ENTREZID,
+                      pAdjustMethod = 'BH',
+                      pvalueCutoff = 0.05,
+                      OrgDb = org.Hs.eg.db,
+                      ont="CC",
+                      readable = TRUE)
+barplot(cc.go.12, showCategory = 20) +  ggtitle("Cluster 12")
+write.csv(cc.go.12, file = "CC_res/c12.csv")
+cc.go.13 <- enrichGO(gene= gene.df.13$ENTREZID,
+                      pAdjustMethod = 'BH',
+                      pvalueCutoff = 0.05,
+                      OrgDb = org.Hs.eg.db,
+                      ont="CC",
+                      readable = TRUE)
+barplot(cc.go.13, showCategory = 20) +  ggtitle("Cluster 13")
+write.csv(cc.go.13, file = "CC_res/c13.csv")
+cc.go.14 <- enrichGO(gene= gene.df.14$ENTREZID,
+                      pAdjustMethod = 'BH',
+                      pvalueCutoff = 0.05,
+                      OrgDb = org.Hs.eg.db,
+                      ont="CC",
+                      readable = TRUE)
+barplot(cc.go.14, showCategory = 20) +  ggtitle("Cluster 14")
+write.csv(cc.go.14, file = "CC_res/c14.csv")
+cc.go.15 <- enrichGO(gene= gene.df.15$ENTREZID,
+                      pAdjustMethod = 'BH',
+                      pvalueCutoff = 0.05,
+                      OrgDb = org.Hs.eg.db,
+                      ont="CC",
+                      readable = TRUE)
+barplot(cc.go.15, showCategory = 20) +  ggtitle("Cluster 15")
+write.csv(cc.go.15, file = "CC_res/c15.csv")
+cc.go.16 <- enrichGO(gene= gene.df.16$ENTREZID,
+                      pAdjustMethod = 'BH',
+                      pvalueCutoff = 0.05,
+                      OrgDb = org.Hs.eg.db,
+                      ont="CC",
+                      readable = TRUE)
+barplot(cc.go.16, showCategory = 20) +  ggtitle("Cluster 16")
+write.csv(cc.go.16, file = "CC_res/c16.csv")
+cc.go.17 <- enrichGO(gene= gene.df.17$ENTREZID,
+                      pAdjustMethod = 'BH',
+                      pvalueCutoff = 0.05,
+                      OrgDb = org.Hs.eg.db,
+                      ont="CC",
+                      readable = TRUE)
+barplot(cc.go.17, showCategory = 20) +  ggtitle("Cluster 17")
+write.csv(cc.go.17, file = "CC_res/c17.csv")
+
+
+```
+
+### Biological Process GO terms which are enriched in cluster biomarkers
+Barplots are shown of the top enriched biological process term for each cluster, with the y-axis showing the GO term, the bars colored by p-value, and the x-axis shows the Count (genes that are associated with a particular GO term).
+```{r BP,  echo=FALSE, warning=FALSE, fig.align="center", fig.width=16, fig.height=8,}
+dir.create("BP_res")
+bp.go.0 <- enrichGO(gene= gene.df.0$ENTREZID,
+                      pAdjustMethod = 'BH',
+                      pvalueCutoff = 0.05,
+                      OrgDb = org.Hs.eg.db,
+                      ont="BP",
+                      readable = TRUE)
+barplot(bp.go.0, showCategory = 20) +  ggtitle("Cluster 0")
+write.csv(bp.go.0, file = "BP_res/c0.csv")
+bp.go.1 <- enrichGO(gene= gene.df.1$ENTREZID,
+                      pAdjustMethod = 'BH',
+                      pvalueCutoff = 0.05,
+                      OrgDb = org.Hs.eg.db,
+                      ont="BP",
+                      readable = TRUE)
+barplot(bp.go.1, showCategory = 20) +  ggtitle("Cluster 1")
+write.csv(bp.go.1, file = "BP_res/c1.csv")
+bp.go.2 <- enrichGO(gene= gene.df.2$ENTREZID,
+                      pAdjustMethod = 'BH',
+                      pvalueCutoff = 0.05,
+                      OrgDb = org.Hs.eg.db,
+                      ont="BP",
+                      readable = TRUE)
+barplot(bp.go.2, showCategory = 20) +  ggtitle("Cluster 2")
+write.csv(bp.go.2, file = "BP_res/c2.csv")
+bp.go.3 <- enrichGO(gene= gene.df.3$ENTREZID,
+                      pAdjustMethod = 'BH',
+                      pvalueCutoff = 0.05,
+                      OrgDb = org.Hs.eg.db,
+                      ont="BP",
+                      readable = TRUE)
+barplot(bp.go.3, showCategory = 20) +  ggtitle("Cluster 3")
+write.csv(bp.go.3, file = "BP_res/c3.csv")
+
+bp.go.4 <- enrichGO(gene= gene.df.4$ENTREZID,
+                      pAdjustMethod = 'BH',
+                      pvalueCutoff = 0.05,
+                      OrgDb = org.Hs.eg.db,
+                      ont="BP",
+                      readable = TRUE)
+barplot(bp.go.4, showCategory = 20) +  ggtitle("Cluster 4")
+write.csv(bp.go.4, file = "BP_res/c4.csv")
+bp.go.5 <- enrichGO(gene= gene.df.5$ENTREZID,
+                      pAdjustMethod = 'BH',
+                      pvalueCutoff = 0.05,
+                      OrgDb = org.Hs.eg.db,
+                      ont="BP",
+                      readable = TRUE)
+barplot(bp.go.5, showCategory = 20) +  ggtitle("Cluster 5")
+write.csv(bp.go.5, file = "BP_res/c5.csv")
+bp.go.6 <- enrichGO(gene= gene.df.6$ENTREZID,
+                      pAdjustMethod = 'BH',
+                      pvalueCutoff = 0.05,
+                      OrgDb = org.Hs.eg.db,
+                      ont="BP",
+                      readable = TRUE)
+barplot(bp.go.6, showCategory = 20) +  ggtitle("Cluster 6")
+write.csv(bp.go.6, file = "BP_res/c6.csv")
+bp.go.7 <- enrichGO(gene= gene.df.7$ENTREZID,
+                      pAdjustMethod = 'BH',
+                      pvalueCutoff = 0.05,
+                      OrgDb = org.Hs.eg.db,
+                      ont="BP",
+                      readable = TRUE)
+barplot(bp.go.7, showCategory = 20) +  ggtitle("Cluster 7")
+write.csv(bp.go.7, file = "BP_res/c7.csv")
+bp.go.8 <- enrichGO(gene= gene.df.8$ENTREZID,
+                      pAdjustMethod = 'BH',
+                      pvalueCutoff = 0.05,
+                      OrgDb = org.Hs.eg.db,
+                      ont="BP",
+                      readable = TRUE)
+barplot(bp.go.8, showCategory = 20) +  ggtitle("Cluster 8")
+write.csv(bp.go.8, file = "BP_res/c8.csv")
+bp.go.9 <- enrichGO(gene= gene.df.9$ENTREZID,
+                      pAdjustMethod = 'BH',
+                      pvalueCutoff = 0.05,
+                      OrgDb = org.Hs.eg.db,
+                      ont="BP",
+                      readable = TRUE)
+barplot(bp.go.9, showCategory = 20) +  ggtitle("Cluster 9")
+write.csv(bp.go.9, file = "BP_res/c9.csv")
+bp.go.10 <- enrichGO(gene= gene.df.10$ENTREZID,
+                      pAdjustMethod = 'BH',
+                      pvalueCutoff = 0.05,
+                      OrgDb = org.Hs.eg.db,
+                      ont="BP",
+                      readable = TRUE)
+barplot(bp.go.10, showCategory = 20) +  ggtitle("Cluster 10")
+write.csv(bp.go.10, file = "BP_res/c10.csv")
+bp.go.11 <- enrichGO(gene= gene.df.11$ENTREZID,
+                      pAdjustMethod = 'BH',
+                      pvalueCutoff = 0.05,
+                      OrgDb = org.Hs.eg.db,
+                      ont="BP",
+                      readable = TRUE)
+barplot(bp.go.11, showCategory = 20) +  ggtitle("Cluster 11")
+write.csv(bp.go.11, file = "BP_res/c11.csv")
+bp.go.12 <- enrichGO(gene= gene.df.12$ENTREZID,
+                      pAdjustMethod = 'BH',
+                      pvalueCutoff = 0.05,
+                      OrgDb = org.Hs.eg.db,
+                      ont="BP",
+                      readable = TRUE)
+barplot(bp.go.12, showCategory = 20) +  ggtitle("Cluster 12")
+write.csv(bp.go.12, file = "BP_res/c12.csv")
+bp.go.13 <- enrichGO(gene= gene.df.13$ENTREZID,
+                      pAdjustMethod = 'BH',
+                      pvalueCutoff = 0.05,
+                      OrgDb = org.Hs.eg.db,
+                      ont="BP",
+                      readable = TRUE)
+barplot(bp.go.13, showCategory = 20) +  ggtitle("Cluster 13")
+write.csv(bp.go.13, file = "BP_res/c13.csv")
+bp.go.14 <- enrichGO(gene= gene.df.14$ENTREZID,
+                      pAdjustMethod = 'BH',
+                      pvalueCutoff = 0.05,
+                      OrgDb = org.Hs.eg.db,
+                      ont="BP",
+                      readable = TRUE)
+barplot(bp.go.14, showCategory = 20) +  ggtitle("Cluster 14")
+write.csv(bp.go.14, file = "BP_res/c14.csv")
+bp.go.15 <- enrichGO(gene= gene.df.15$ENTREZID,
+                      pAdjustMethod = 'BH',
+                      pvalueCutoff = 0.05,
+                      OrgDb = org.Hs.eg.db,
+                      ont="BP",
+                      readable = TRUE)
+barplot(bp.go.15, showCategory = 20) +  ggtitle("Cluster 15")
+write.csv(bp.go.15, file = "BP_res/c15.csv")
+bp.go.16 <- enrichGO(gene= gene.df.16$ENTREZID,
+                      pAdjustMethod = 'BH',
+                      pvalueCutoff = 0.05,
+                      OrgDb = org.Hs.eg.db,
+                      ont="BP",
+                      readable = TRUE)
+barplot(bp.go.16, showCategory = 20) +  ggtitle("Cluster 16")
+write.csv(bp.go.16, file = "BP_res/c16.csv")
+bp.go.17 <- enrichGO(gene= gene.df.17$ENTREZID,
+                      pAdjustMethod = 'BH',
+                      pvalueCutoff = 0.05,
+                      OrgDb = org.Hs.eg.db,
+                      ont="BP",
+                      readable = TRUE)
+barplot(bp.go.17, showCategory = 20) +  ggtitle("Cluster 17")
+write.csv(bp.go.17, file = "BP_res/c17.csv")
+
+```
+
+### Molecular Function GO terms which are enriched in cluster biomarkers
+
+Barplots are shown of the top enriched molecular function term for each cluster, with the y-axis showing the GO term, the bars colored by p-value, and the x-axis shows the Count (genes that are associated with a particular GO term).
+```{r MF,  echo=FALSE, warning=FALSE, fig.align="center", fig.width=16, fig.height=8,}
+dir.create("MF_res")
+mf.go.0 <- enrichGO(gene= gene.df.0$ENTREZID,
+                      pAdjustMethod = 'BH',
+                      pvalueCutoff = 0.05,
+                      OrgDb = org.Hs.eg.db,
+                      ont="MF",
+                      readable = TRUE)
+barplot(mf.go.0, showCategory = 20) +  ggtitle("Cluster 0")
+write.csv(mf.go.0, file = "MF_res/c0.csv")
+mf.go.1 <- enrichGO(gene= gene.df.1$ENTREZID,
+                      pAdjustMethod = 'BH',
+                      pvalueCutoff = 0.05,
+                      OrgDb = org.Hs.eg.db,
+                      ont="MF",
+                      readable = TRUE)
+barplot(mf.go.1, showCategory = 20) +  ggtitle("Cluster 1")
+write.csv(mf.go.1, file = "MF_res/c1.csv")
+mf.go.2 <- enrichGO(gene= gene.df.2$ENTREZID,
+                      pAdjustMethod = 'BH',
+                      pvalueCutoff = 0.05,
+                      OrgDb = org.Hs.eg.db,
+                      ont="MF",
+                      readable = TRUE)
+barplot(mf.go.2, showCategory = 20) +  ggtitle("Cluster 2")
+write.csv(mf.go.2, file = "MF_res/c2.csv")
+mf.go.3 <- enrichGO(gene= gene.df.3$ENTREZID,
+                      pAdjustMethod = 'BH',
+                      pvalueCutoff = 0.05,
+                      OrgDb = org.Hs.eg.db,
+                      ont="MF",
+                      readable = TRUE)
+barplot(mf.go.3, showCategory = 20) +  ggtitle("Cluster 3")
+write.csv(mf.go.3, file = "MF_res/c3.csv")
+mf.go.4 <- enrichGO(gene= gene.df.4$ENTREZID,
+                      pAdjustMethod = 'BH',
+                      pvalueCutoff = 0.05,
+                      OrgDb = org.Hs.eg.db,
+                      ont="MF",
+                      readable = TRUE)
+barplot(mf.go.4, showCategory = 20) +  ggtitle("Cluster 4")
+write.csv(mf.go.4, file = "MF_res/c4.csv")
+mf.go.5 <- enrichGO(gene= gene.df.5$ENTREZID,
+                      pAdjustMethod = 'BH',
+                      pvalueCutoff = 0.05,
+                      OrgDb = org.Hs.eg.db,
+                      ont="MF",
+                      readable = TRUE)
+barplot(mf.go.5, showCategory = 20) +  ggtitle("Cluster 5")
+write.csv(mf.go.5, file = "MF_res/c5.csv")
+mf.go.6 <- enrichGO(gene= gene.df.6$ENTREZID,
+                      pAdjustMethod = 'BH',
+                      pvalueCutoff = 0.05,
+                      OrgDb = org.Hs.eg.db,
+                      ont="MF",
+                      readable = TRUE)
+barplot(mf.go.6, showCategory = 20) +  ggtitle("Cluster 6")
+write.csv(mf.go.6, file = "MF_res/c6.csv")
+mf.go.7 <- enrichGO(gene= gene.df.7$ENTREZID,
+                      pAdjustMethod = 'BH',
+                      pvalueCutoff = 0.05,
+                      OrgDb = org.Hs.eg.db,
+                      ont="MF",
+                      readable = TRUE)
+barplot(mf.go.7, showCategory = 20) +  ggtitle("Cluster 7")
+write.csv(mf.go.7, file = "MF_res/c7.csv")
+mf.go.8 <- enrichGO(gene= gene.df.8$ENTREZID,
+                      pAdjustMethod = 'BH',
+                      pvalueCutoff = 0.05,
+                      OrgDb = org.Hs.eg.db,
+                      ont="MF",
+                      readable = TRUE)
+barplot(mf.go.8, showCategory = 20) +  ggtitle("Cluster 8")
+write.csv(mf.go.8, file = "MF_res/c8.csv")
+mf.go.9 <- enrichGO(gene= gene.df.9$ENTREZID,
+                      pAdjustMethod = 'BH',
+                      pvalueCutoff = 0.05,
+                      OrgDb = org.Hs.eg.db,
+                      ont="MF",
+                      readable = TRUE)
+barplot(mf.go.9, showCategory = 20) +  ggtitle("Cluster 9")
+write.csv(mf.go.9, file = "MF_res/c9.csv")
+mf.go.10 <- enrichGO(gene= gene.df.10$ENTREZID,
+                      pAdjustMethod = 'BH',
+                      pvalueCutoff = 0.05,
+                      OrgDb = org.Hs.eg.db,
+                      ont="MF",
+                      readable = TRUE)
+barplot(mf.go.10, showCategory = 20) +  ggtitle("Cluster 10")
+write.csv(mf.go.10, file = "MF_res/c10.csv")
+mf.go.11 <- enrichGO(gene= gene.df.11$ENTREZID,
+                      pAdjustMethod = 'BH',
+                      pvalueCutoff = 0.05,
+                      OrgDb = org.Hs.eg.db,
+                      ont="MF",
+                      readable = TRUE)
+barplot(mf.go.11, showCategory = 20) +  ggtitle("Cluster 11")
+write.csv(mf.go.11, file = "MF_res/c11.csv")
+mf.go.12 <- enrichGO(gene= gene.df.12$ENTREZID,
+                      pAdjustMethod = 'BH',
+                      pvalueCutoff = 0.05,
+                      OrgDb = org.Hs.eg.db,
+                      ont="MF",
+                      readable = TRUE)
+barplot(mf.go.12, showCategory = 20) +  ggtitle("Cluster 12")
+write.csv(mf.go.12, file = "MF_res/c12.csv")
+mf.go.13 <- enrichGO(gene= gene.df.13$ENTREZID,
+                      pAdjustMethod = 'BH',
+                      pvalueCutoff = 0.05,
+                      OrgDb = org.Hs.eg.db,
+                      ont="MF",
+                      readable = TRUE)
+barplot(mf.go.13, showCategory = 20) +  ggtitle("Cluster 13")
+write.csv(mf.go.13, file = "MF_res/c13.csv")
+mf.go.14 <- enrichGO(gene= gene.df.14$ENTREZID,
+                      pAdjustMethod = 'BH',
+                      pvalueCutoff = 0.05,
+                      OrgDb = org.Hs.eg.db,
+                      ont="MF",
+                      readable = TRUE)
+barplot(mf.go.14, showCategory = 20) +  ggtitle("Cluster 14")
+write.csv(mf.go.14, file = "MF_res/c14.csv")
+mf.go.15 <- enrichGO(gene= gene.df.15$ENTREZID,
+                      pAdjustMethod = 'BH',
+                      pvalueCutoff = 0.05,
+                      OrgDb = org.Hs.eg.db,
+                      ont="MF",
+                      readable = TRUE)
+barplot(mf.go.15, showCategory = 20) +  ggtitle("Cluster 15")
+write.csv(mf.go.15, file = "MF_res/c15.csv")
+mf.go.16 <- enrichGO(gene= gene.df.16$ENTREZID,
+                      pAdjustMethod = 'BH',
+                      pvalueCutoff = 0.05,
+                      OrgDb = org.Hs.eg.db,
+                      ont="MF",
+                      readable = TRUE)
+barplot(mf.go.16, showCategory = 20) +  ggtitle("Cluster 16")
+write.csv(mf.go.16, file = "MF_res/c16.csv")
+mf.go.17 <- enrichGO(gene= gene.df.17$ENTREZID,
+                      pAdjustMethod = 'BH',
+                      pvalueCutoff = 0.05,
+                      OrgDb = org.Hs.eg.db,
+                      ont="MF",
+                      readable = TRUE)
+barplot(mf.go.17, showCategory = 20) +  ggtitle("Cluster 17")
+write.csv(mf.go.17, file = "MF_res/c17.csv")
+
+```
+
+
+
+# Libraries and Packages used in the Analysis
+```{r}
+sessionInfo()
+```
