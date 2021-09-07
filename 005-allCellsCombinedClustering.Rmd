@@ -1,13 +1,30 @@
 ---
-title: "BPH All Cells scRNA-seq Analysis"
-author: "Nadia Lanman"
-date: "7/21/2021"
+title: "Combined Anchor-Based Clustering Analysis of all cells associated with prostates from BPH patients"
+date: "`r Sys.Date()`"
+author: Nadia A. Lanman
+params:
+  num_dimensions_use_anchor: 30
+  num_dimensions_use_pca: 30
+  resolution: 0.2
+  seurat_RDS: NULL
+  label_name: Sample
+  labels: NULL
+  out_dir: rmarkdown/
 output:
   html_document:
-    toc: true
-    highlight: kate
-    keep_md: yes
+    df_print: paged
 ---
+
+```{r}
+print(params)
+parameters <- params
+parameters[["seurat_out_path"]] <- paste0(
+    parameters[["out_dir"]],
+    "/combined_seurat.RDS")
+parameters[["cache_mode"]] <- file.exists(parameters[["seurat_out_path"]] )
+if(parameters[["cache_mode"]]) warning("Running in cache mode, make sure that is what you want")
+```
+
 ---
 
 ```{r knitr_init, echo=FALSE, cache=FALSE}
