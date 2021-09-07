@@ -58,3 +58,4 @@ To run scripts
  006-allCellsCombinedClustering.Rmd
 
 -Ensure directory structure is appropriate for your system and click "knit"
+-If these scripts are used on another dataset, other parameters that may need to be changed include quality control parameters (filtering cutoffs), dimensionality reductions parameters (such as number of variable genes to include and number of principal components to include), and clustering parameters that Seurat uses in implementing the Louvain algorithm (resolution or res)
