@@ -1,10 +1,27 @@
 ---
 title: "R Notebook"
+params:
+  num_dimensions_use_anchor: 30
+  num_dimensions_use_pca: 30
+  resolution: 0.2
+  seurat_RDS: NULL
+  label_name: Sample
+  labels: NULL
+  out_dir: rmarkdown/
 output:
   html_document:
     df_print: paged
 ---
 
+```{r}
+print(params)
+parameters <- params
+parameters[["seurat_out_path"]] <- paste0(
+    parameters[["out_dir"]],
+    "/combined_seurat.RDS")
+parameters[["cache_mode"]] <- file.exists(parameters[["seurat_out_path"]] )
+if(parameters[["cache_mode"]]) warning("Running in cache mode, make sure that is what you want")
+```
 
 ```{r}
 knitr::opts_chunk$set(message = FALSE, cache = FALSE, echo = TRUE)
