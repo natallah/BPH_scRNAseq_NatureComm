@@ -23,6 +23,7 @@ parameters[["seurat_out_path"]] <- paste0(
     "/combined_seurat.RDS")
 parameters[["cache_mode"]] <- file.exists(parameters[["seurat_out_path"]] )
 if(parameters[["cache_mode"]]) warning("Running in cache mode, make sure that is what you want")
+
 ```
 
 ---
@@ -76,11 +77,11 @@ set.seed(42)
 type.color <- wes_palette("FantasticFox1", n=5)
 my_color_palette.origident <- hue_pal()(5)
 
-data_1628 <- Read10X(data.dir = "../step1_cellRanger/1628_all/outs/filtered_feature_bc_matrix/")
-data_1595 <- Read10X(data.dir = "../step1_cellRanger/1595_all/outs/filtered_feature_bc_matrix/")
-data_1652 <- Read10X(data.dir = "../step1_cellRanger/1652_all/outs/filtered_feature_bc_matrix/")
-data_1562 <- Read10X(data.dir = "../step1_cellRanger/1562_all/outs/filtered_feature_bc_matrix/")
-data_1579 <- Read10X(data.dir = "../step1_cellRanger/1579_all/outs/filtered_feature_bc_matrix/")
+data_1628 <- Read10X(data.dir = "1628_all/outs/filtered_feature_bc_matrix/")
+data_1595 <- Read10X(data.dir = "1595_all/outs/filtered_feature_bc_matrix/")
+data_1652 <- Read10X(data.dir = "1652_all/outs/filtered_feature_bc_matrix/")
+data_1562 <- Read10X(data.dir = "1562_all/outs/filtered_feature_bc_matrix/")
+data_1579 <- Read10X(data.dir = "1579_all/outs/filtered_feature_bc_matrix/")
 
 seuratobj.1628 <- CreateSeuratObject(counts = data_1628[["Gene Expression"]], assay="RNA", project = "1628")
 seuratobj.1595 <- CreateSeuratObject(counts = data_1595[["Gene Expression"]], assay="RNA", project = "1595")
@@ -437,31 +438,25 @@ kable(filtertable,caption="Original cell number in each sample and cells remaini
 s.genes <- cc.genes$s.genes
 g2m.genes <- cc.genes$g2m.genes
 
-#seuratobj.1562 <- NormalizeData(seuratobj.1562)
-#seuratobj.1562 <- CellCycleScoring(seuratobj.1562, s.features = s.genes, g2m.features = g2m.genes)
-#seuratobj.1562 <- SCTransform(seuratobj.1562, verbose = FALSE, vars.to.regress = c("percent.mt","S.Score","G2M.Score"),return.only.var.genes = FALSE, variable.features.n = 3000)
+seuratobj.1562 <- NormalizeData(seuratobj.1562)
+seuratobj.1562 <- CellCycleScoring(seuratobj.1562, s.features = s.genes, g2m.features = g2m.genes)
+seuratobj.1562 <- SCTransform(seuratobj.1562, verbose = FALSE, vars.to.regress = c("percent.mt","S.Score","G2M.Score"),return.only.var.genes = FALSE, variable.features.n = 3000)
 
-#seuratobj.1579 <- NormalizeData(seuratobj.1579)
-#seuratobj.1579 <- CellCycleScoring(seuratobj.1579, s.features = s.genes, g2m.features = g2m.genes)
-#seuratobj.1579 <- SCTransform(seuratobj.1579, verbose = FALSE, vars.to.regress = c("percent.mt","S.Score","G2M.Score"),return.only.var.genes = FALSE, variable.features.n = 3000)
+seuratobj.1579 <- NormalizeData(seuratobj.1579)
+seuratobj.1579 <- CellCycleScoring(seuratobj.1579, s.features = s.genes, g2m.features = g2m.genes)
+seuratobj.1579 <- SCTransform(seuratobj.1579, verbose = FALSE, vars.to.regress = c("percent.mt","S.Score","G2M.Score"),return.only.var.genes = FALSE, variable.features.n = 3000)
 
-#seuratobj.1595 <- NormalizeData(seuratobj.1595)
-#seuratobj.1595 <- CellCycleScoring(seuratobj.1595, s.features = s.genes, g2m.features = g2m.genes)
-#seuratobj.1595 <- SCTransform(seuratobj.1595, verbose = FALSE, vars.to.regress = c("percent.mt","S.Score","G2M.Score"),return.only.var.genes = FALSE, variable.features.n = 3000)
+seuratobj.1595 <- NormalizeData(seuratobj.1595)
+seuratobj.1595 <- CellCycleScoring(seuratobj.1595, s.features = s.genes, g2m.features = g2m.genes)
+seuratobj.1595 <- SCTransform(seuratobj.1595, verbose = FALSE, vars.to.regress = c("percent.mt","S.Score","G2M.Score"),return.only.var.genes = FALSE, variable.features.n = 3000)
 
-#seuratobj.1628 <- NormalizeData(seuratobj.1628)
-#seuratobj.1628 <- CellCycleScoring(seuratobj.1628, s.features = s.genes, g2m.features = g2m.genes)
-#seuratobj.1628 <- SCTransform(seuratobj.1628, verbose = FALSE, vars.to.regress = c("percent.mt","S.Score","G2M.Score"),return.only.var.genes = FALSE, variable.features.n = 3000)
+seuratobj.1628 <- NormalizeData(seuratobj.1628)
+seuratobj.1628 <- CellCycleScoring(seuratobj.1628, s.features = s.genes, g2m.features = g2m.genes)
+seuratobj.1628 <- SCTransform(seuratobj.1628, verbose = FALSE, vars.to.regress = c("percent.mt","S.Score","G2M.Score"),return.only.var.genes = FALSE, variable.features.n = 3000)
 
-#seuratobj.1652 <- NormalizeData(seuratobj.1652)
-#seuratobj.1652 <- CellCycleScoring(seuratobj.1652, s.features = s.genes, g2m.features = g2m.genes)
-#seuratobj.1652 <- SCTransform(seuratobj.1652, verbose = FALSE, vars.to.regress = c("percent.mt","S.Score","G2M.Score"),return.only.var.genes = FALSE, variable.features.n = 3000)
-
-#saveRDS(seuratobj.1562,"Indiv_all_1562.RDS")
-#saveRDS(seuratobj.1579,"Indiv_all_1579.RDS")
-#saveRDS(seuratobj.1595,"Indiv_all_1595.RDS")
-#saveRDS(seuratobj.1628,"Indiv_all_1628.RDS")
-#saveRDS(seuratobj.1652,"Indiv_all_1652.RDS")
+seuratobj.1652 <- NormalizeData(seuratobj.1652)
+seuratobj.1652 <- CellCycleScoring(seuratobj.1652, s.features = s.genes, g2m.features = g2m.genes)
+seuratobj.1652 <- SCTransform(seuratobj.1652, verbose = FALSE, vars.to.regress = c("percent.mt","S.Score","G2M.Score"),return.only.var.genes = FALSE, variable.features.n = 3000)
 
 ```
 
@@ -470,17 +465,17 @@ g2m.genes <- cc.genes$g2m.genes
 For this analysis, all samples were combined together and anchor-based clustering was used to perform integrated clustering on the cells.  Previously filtered data were combined and clustered together. Principal component analysis was next performed, and principal components selected for using in later analyses.
 
 ```{r echo=FALSE}
-#combined.list <-c(seuratobj.1562,seuratobj.1579,seuratobj.1595,seuratobj.1628,seuratobj.1652)
-#features <- SelectIntegrationFeatures(object.list=combined.list)
-#combined.list <- PrepSCTIntegration(object.list=combined.list,anchor.features=features)
-#anchors <- FindIntegrationAnchors(object.list=combined.list, anchor.features=features)
-#seurat.comb <- IntegrateData(anchorset=anchors)
+combined.list <-c(seuratobj.1562,seuratobj.1579,seuratobj.1595,seuratobj.1628,seuratobj.1652)
+features <- SelectIntegrationFeatures(object.list=combined.list)
+combined.list <- PrepSCTIntegration(object.list=combined.list,anchor.features=features)
+anchors <- FindIntegrationAnchors(object.list=combined.list, anchor.features=features)
+seurat.comb <- IntegrateData(anchorset=anchors)
 
 seurat.comb <- readRDS("all_combined.RDS")
 seurat.comb@project.name <- "allCells"
 DefaultAssay(seurat.comb) <- "integrated"
 
-#saveRDS(seurat.comb,"all_combined.RDS")
+saveRDS(seurat.comb,"all_combined.RDS")
 
 
 ```
@@ -497,76 +492,65 @@ ElbowPlot(seurat.comb)
 Finally, a graph-based clustering is used to cluster cells.  The top `r PCuse` PCs were used in clustering the cells. Care must be taken in setting the parameters of the Louvain algorithm-based community detection analysis, specifically the resolution parameter. In general, we will likely always somewhat over- or under- cluster cells. While the location of cells in the plots below are not affected by the resolution parameter, the number of clusters is.  Higher resolutions lead to more clusters. We ran the community detection algorithm with a number of resolution settings and then looked at clustering trees resulting from the chosen resolutions to select the setting that balances sensitivity with cluster stability.  If resolution is set too low, few clusters will be observed.  If resolution is set too high, cluster instability is observed by many low in-proportion edges.  Seurat recommends a resolution value between 0.6-1.2, but it is always a good idea to test multiple resolutions.  Here, resolutions of 0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9,1.0, 1.1, 1.2, and 1.3 were used.  It seems here that `r res` is the optimal resolution. In analyses using resolutions less than `r res`, clusters are split into further clusters, with relatively high proportions of cells splitting off.  However starting with the jump to resolution of `r res+0.1`, clusters become more unstable.  Note, however that we can easily change the resolution setting if desired - this is somewhat of an art and in this case, it is hard to say which resolution setting is ideal (in some projects this is quite obvious).  It will likely be more clear which resolution setting to choose when we combine across sample groups. 
 
 ```{r clustree, echo=FALSE, message=FALSE, warning=FALSE, fig.align="center", fig.width=8, fig.height=6,fig.cap= "**Figure 2.  Clustering tree plot.**"}
-#seurat.comb <- RunUMAP(seurat.comb,reduction="pca",dims=1:PCuse)
-#seurat.comb <- FindNeighbors(
-#  seurat.comb,
-#  dims = 1:PCuse)
+seurat.comb <- RunUMAP(seurat.comb,reduction="pca",dims=1:PCuse)
+seurat.comb <- FindNeighbors(
+  seurat.comb,
+  dims = 1:PCuse)
 
-#fortree <- seurat.comb
-#res.vec <- seq(0,1.3,0.1)
-#for (r in res.vec){
-#fortree <- FindClusters(
-#  fortree, 
-#  resolution = r)
-#}
-#saveRDS(fortree,"seurat_for_clustree.RDS")
-#fortree <- readRDS("seurat_for_clustree.RDS")
-#pdf("allCells_clusterTree.pdf",height=11,width=8)
-#clustree(fortree, assay="SCT",prefix="integrated_snn_res.")
-#dev.off()
-knitr::include_graphics("allCells_clusterTree.pdf")
+fortree <- seurat.comb
+res.vec <- seq(0,1.3,0.1)
+for (r in res.vec){
+fortree <- FindClusters(
+  fortree, 
+  resolution = r)
+}
+
 ```
 
 
 ```{r include=FALSE}
 
-#seurat.comb <- FindClusters(
-#  seurat.comb, 
-#  resolution = res)
+seurat.comb <- FindClusters(
+  seurat.comb, 
+  resolution = res)
 
 
-#saveRDS(seurat.comb,"all_combined.RDS")
+saveRDS(seurat.comb,"all_combined.RDS")
 ```
 
 ```{r PCA0.3, echo=FALSE, warning=FALSE, fig.align="center", fig.width=8, fig.height=6,fig.cap= "**PCA plot of the combined clustering, with cells colored by detected clusters.**  "}
 
 #make figs for paper
-#png(filename="sample_umap.png", width=10, height=8,units='in',res=600)
-#DimPlot(seurat.comb, reduction = "umap", group.by = "orig.ident")
-#dev.off()
+png(filename="sample_umap.png", width=10, height=8,units='in',res=600)
+DimPlot(seurat.comb, reduction = "umap", group.by = "orig.ident")
+dev.off()
 
-#png(filename="umap.png", width=10, height=8,units='in',res=600)
-#DimPlot(seurat.comb, reduction = "umap")
-#dev.off()
+png(filename="umap.png", width=10, height=8,units='in',res=600)
+DimPlot(seurat.comb, reduction = "umap")
+dev.off()
 
-#png(filename="umap_labeled.png", width=10, height=8,units='in',res=600)
-#DimPlot(seurat.comb, reduction = "umap",label=TRUE)
-#dev.off()
+png(filename="umap_labeled.png", width=10, height=8,units='in',res=600)
+DimPlot(seurat.comb, reduction = "umap",label=TRUE)
+dev.off()
 
-#g <- FeaturePlot(
-#    seurat.comb, features = "TNFRSF1A", 
-#    order = TRUE,
-#    cols = viridis::viridis(7, direction = -1))
-#ggsave(plot = g, "genePlots_TNFRSF1A.png", width = 10, height = 8, units='in' ,dpi=600)
+g <- FeaturePlot(
+    seurat.comb, features = "TNFRSF1A", 
+    order = TRUE,
+    cols = viridis::viridis(7, direction = -1))
+ggsave(plot = g, "genePlots_TNFRSF1A.png", width = 10, height = 8, units='in' ,dpi=600)
 
-#g <- FeaturePlot(
-#    seurat.comb, features = "EPCAM", 
-#    order = TRUE,
-#    cols = viridis::magma(7, direction = -1))
-#ggsave(plot = g, "genePlots_EPCAM_magma.png", width = 10, height = 8, units='in' ,dpi=600)
+g <- FeaturePlot(
+    seurat.comb, features = "EPCAM", 
+    order = TRUE,
+    cols = viridis::magma(7, direction = -1))
+ggsave(plot = g, "genePlots_EPCAM_magma.png", width = 10, height = 8, units='in' ,dpi=600)
 
-#g <- VlnPlot(
-#    seurat.comb, features = "PTPRC")
-#ggsave(plot = g, "VlnPlot_PTPRC.png", width = 10, height = 8, units='in' ,dpi=600)
-#p <- VlnPlot(
-#    seurat.comb, features = "PTPRC", pt.size = 0)
-#ggsave(plot = p, "VlnPlot_noPoints_PTPRC.png", width = 10, height = 8, units='in' ,dpi=600)
-#gp <- g+ggtitle("EPCAM")
-#g$data$TNFRSF1B <- rep(0,length(g$data$TNFRSF1A))
-#p$data$TNFRSF1B <- rep(0,length(p$data$TNFRSF1B))
-#pp <- p+ggtitle("EPCAM")
-
-#ggsave(plot = pp, "VlnPlot_noPoints_EPCAM.png", width = 10, height = 8, units='in' ,dpi=600)
+g <- VlnPlot(
+    seurat.comb, features = "PTPRC")
+ggsave(plot = g, "VlnPlot_PTPRC.png", width = 10, height = 8, units='in' ,dpi=600)
+p <- VlnPlot(
+    seurat.comb, features = "PTPRC", pt.size = 0)
+ggsave(plot = p, "VlnPlot_noPoints_PTPRC.png", width = 10, height = 8, units='in' ,dpi=600)
 
 DimPlot(
   seurat.comb,
@@ -606,20 +590,20 @@ DimPlot(seurat.comb, reduction = "umap", split.by="orig.ident")
 ```{r citeSeq, echo=FALSE, warning=FALSE, fig.align="center", fig.width=8, fig.height=6,fig.cap= "**Dot Plot Protein Marker Visualization"}
 citeseq_markers.comb <- paste0(seurat.comb@assays$ADT@key, rownames(seurat.comb@assays$ADT@data))
 DefaultAssay(seurat.comb) <- "ADT"
-#seurat.comb <- NormalizeData(seurat.comb, normalization.method = "CLR", margin=2)
-#seurat_obj <- ScaleData(seurat.comb, assay = "ADT")
+seurat.comb <- NormalizeData(seurat.comb, normalization.method = "CLR", margin=2)
+seurat_obj <- ScaleData(seurat.comb, assay = "ADT")
 citeseq_markers.comb %>% DotPlot(seurat.comb, features = .) + Seurat::RotatedAxis()
-#for (i in 1:length(citeseq_markers.comb)){
-# g<- FeaturePlot(seurat.comb, features=citeseq_markers.comb[i])
-# filename <- paste0("featurePlot_cite_seq",citeseq_markers.comb[i],".png")
-# ggsave(plot = g, filename=filename, width = 10, height = 8, units='in' ,dpi=600)
-# f<- RidgePlot(seurat.comb, features=citeseq_markers.comb[i])
-# filename2 <- paste0("ridgePlot_cite_seq",citeseq_markers.comb[i],".png")
-# ggsave(plot = f, filename=filename2, width = 8, height = 8, units='in' ,dpi=600)
-# v <- VlnPlot(seurat.comb, features=citeseq_markers.comb[i],pt.size = 0)
-# filename3 <- paste0("violinPlot_cite_seq_noPoints_",citeseq_markers.comb[i],".png")
-# ggsave(plot = v, filename=filename3, width = 10, height = 8, units='in' ,dpi=600)
-#}
+for (i in 1:length(citeseq_markers.comb)){
+ g<- FeaturePlot(seurat.comb, features=citeseq_markers.comb[i])
+ filename <- paste0("featurePlot_cite_seq",citeseq_markers.comb[i],".png")
+ ggsave(plot = g, filename=filename, width = 10, height = 8, units='in' ,dpi=600)
+ f<- RidgePlot(seurat.comb, features=citeseq_markers.comb[i])
+ filename2 <- paste0("ridgePlot_cite_seq",citeseq_markers.comb[i],".png")
+ ggsave(plot = f, filename=filename2, width = 8, height = 8, units='in' ,dpi=600)
+ v <- VlnPlot(seurat.comb, features=citeseq_markers.comb[i],pt.size = 0)
+ filename3 <- paste0("violinPlot_cite_seq_noPoints_",citeseq_markers.comb[i],".png")
+ ggsave(plot = v, filename=filename3, width = 10, height = 8, units='in' ,dpi=600)
+}
 
 
 ```
@@ -656,15 +640,15 @@ Cluster biomarkers are those genes that distinguish clusters from one another.  
 
 Cluster biomarkers were identified using a wilcoxon test which had an adjusted p-value < 0.01.  Only markers which had a logFC > 0.25 and were expressed in one cluster in at lease 10% of the cells of that cluster were returned.  Both up-regulated and down-regulated markers were identified.  All markers are in the file **`r seurat.comb@project.name`_allmarkers.csv**.  Be sure to check adjusted p-values of markers to determine statistical significance.
 ```{r include=FALSE}
-#seurat.obj.markers <- FindAllMarkers(
-#  seurat.comb, 
-#  only.pos = FALSE, 
-#  min.pct = 0.1, 
-#  logfc.threshold = 0.25,
-#  return.thresh = 0.01)
+seurat.obj.markers <- FindAllMarkers(
+  seurat.comb, 
+  only.pos = FALSE, 
+  min.pct = 0.1, 
+  logfc.threshold = 0.25,
+  return.thresh = 0.01)
 usefile <- paste(seurat.comb@project.name,"_allmarkers_use.RDS", sep="")
-#write.csv(seurat.obj.markers, file = paste(seurat.comb@project.name,"_allmarkers.csv", sep=""))
-#saveRDS(seurat.obj.markers,file=usefile)
+write.csv(seurat.obj.markers, file = paste(seurat.comb@project.name,"_allmarkers.csv", sep=""))
+saveRDS(seurat.obj.markers,file=usefile)
 seurat.obj.markers <- readRDS(usefile)
 top10 <- seurat.obj.markers %>% group_by(cluster) %>% top_n(n = 10, wt = avg_logFC)
 top5 <- seurat.obj.markers %>% group_by(cluster) %>% top_n(n = 5, wt = avg_logFC)
@@ -797,25 +781,24 @@ library(biomaRt)
 
 #listMarts()
 #choose ensembl dataset and filters to use
-#ensembl=useMart(biomart="ENSEMBL_MART_ENSEMBL",host="www.ensembl.org",dataset="hsapiens_gene_ensembl")
+ensembl=useMart(biomart="ENSEMBL_MART_ENSEMBL",host="www.ensembl.org",dataset="hsapiens_gene_ensembl")
 
-#ensembl = useEnsembl(biomart = "ensembl",dataset="hsapiens_gene_ensembl", mirror = "useast")
-#ensembl = useEnsembl(biomart = "ensembl",dataset="hsapiens_gene_ensembl")
-#filters = listFilters(ensembl)
-#filters[1:5,]
-#attributes = listAttributes(ensembl)
-#attributes[1:15,]
-#filterOptions("Gene_ID",ensembl)
-#background <-data.frame(rownames(seurat.comb@assays$RNA))
-#colnames(background) <- "gene"
-Anno <- read.table("/depot-old/pccr/data/core_data/Annotations/Human_20FEB2020.txt", sep="\t",
-                   stringsAsFactors = F,header=TRUE, quote="")
+ensembl = useEnsembl(biomart = "ensembl",dataset="hsapiens_gene_ensembl", mirror = "useast")
+ensembl = useEnsembl(biomart = "ensembl",dataset="hsapiens_gene_ensembl")
+filters = listFilters(ensembl)
+filters[1:5,]
+attributes = listAttributes(ensembl)
+attributes[1:15,]
+filterOptions("Gene_ID",ensembl)
+background <-data.frame(rownames(seurat.comb@assays$RNA))
+colnames(background) <- "gene"
+
 get_annotations <- function(degs){
-    #annot <- getBM(attributes=c('Gene_ID','hgnc_symbol','entrezgene_id','description','external_gene_name','chromosome_name','start_position','end_position','strand'), filters='hgnc_symbol', values=degs$gene, mart=ensembl)
+    annot <- getBM(attributes=c('Gene_ID','hgnc_symbol','entrezgene_id','description','external_gene_name','chromosome_name','start_position','end_position','strand'), filters='hgnc_symbol', values=degs$gene, mart=ensembl)
     deg_annot = merge(x = degs, y = Anno, by.x="gene",by.y='Gene.name',all.x=TRUE)
     return(deg_annot)
 }
-#background.anno <- get_annotations(background)
+background.anno <- get_annotations(background)
 cnum <- (length(levels(Idents(seurat.comb)))-1)
 spl.mark <- split(seurat.obj.markers, seurat.obj.markers$cluster)
 names(spl.mark) <- paste("c",0:cnum, sep="")
