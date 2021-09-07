@@ -41,9 +41,11 @@ To install R packages through CRAN:
 
 To run scripts
 --------------------------------------------------------
-   -After installation of CRAN and Bioconductor packages, change directory names to reflect your current directory, change parameters as desired and output names of files as desired.  Typical runtime is ~20 minutes and results in an html formatted document detailing main quality control, clustering, and marker gene results.
--Scripts included are not novel software scripts, but are RMarkdown scripts that utilize open-source, well-documented software packages.
--RMarkdown scripts should be run in numerical order:
+   *After installation of CRAN and Bioconductor packages, change directory names to reflect your current directory, change parameters as desired and output names of files as desired.  Typical runtime is ~20 minutes and results in an html formatted document detailing main quality control, clustering, and marker gene results.
+   
+*Scripts included are not novel software scripts, but are RMarkdown scripts that utilize open-source, well-documented software packages.
+
+*RMarkdown scripts should be run in numerical order:
 
  001-Seurat-From-Cellranger.Rmd
 
@@ -57,5 +59,6 @@ To run scripts
 
  006-allCellsCombinedClustering.Rmd
 
--Ensure directory structure is appropriate for your system and click "knit"
--If these scripts are used on another dataset, other parameters that may need to be changed include quality control parameters (filtering cutoffs), dimensionality reductions parameters (such as number of variable genes to include and number of principal components to include), and clustering parameters that Seurat uses in implementing the Louvain algorithm (resolution or res)
+*Ensure directory structure is appropriate for your system and click "knit"
+
+*If these scripts are used on another dataset, other parameters that may need to be changed include quality control parameters (filtering cutoffs), dimensionality reductions parameters (such as number of variable genes to include and number of principal components to include), and clustering parameters that Seurat uses in implementing the Louvain algorithm (resolution or res)
