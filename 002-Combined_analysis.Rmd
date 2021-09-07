@@ -5,6 +5,7 @@ params:
   num_dimensions_use_pca: 30
   resolution: 0.2
   seurat_RDS: NULL
+  input_file: 
   label_name: Sample
   labels: NULL
   out_dir: rmarkdown/
