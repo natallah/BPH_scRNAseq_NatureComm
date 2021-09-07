@@ -1,9 +1,9 @@
 ---
 title: "R Notebook"
 params:
-  num_dimensions_use_anchor: 15
-  num_dimensions_use_pca: 15
-  resolution: 0.4
+  num_dimensions_use_anchor: 30
+  num_dimensions_use_pca: 30
+  resolution: 0.2
   seurat_RDS: NULL
   label_name: Sample
   labels: NULL
