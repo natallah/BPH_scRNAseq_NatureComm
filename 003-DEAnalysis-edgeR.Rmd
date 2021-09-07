@@ -1,5 +1,7 @@
 ---
-title: "R Notebook"
+title: "Differential Expression Analysis with edgeR"
+date: "`r Sys.Date()`"
+author: Nadia A. Lanman
 params:
   num_dimensions_use_anchor: 30
   num_dimensions_use_pca: 30
