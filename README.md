@@ -68,6 +68,6 @@ To run scripts
  This script reads in barcodes, features, and count matrices generated from 10X CellRanger Count for samples that contain all cells associated with "large" BPH prostates (rather than only leukocytes), performs additional quality control, scaling, and normalization, dimensionality reduction, clustering, and marker gene identification.
  
 *Ensure directory structure is appropriate for your system and click "knit" for RMarkdown scripts (scripts 001-003 and 005)
-*For script 004, run scripts as desired piecemeal in RStudio or R, or on commandline via the command "Rscript 004-leukocyte_plots.R"
+*For script 004, run scripts as desired piecemeal in RStudio or R, or on commandline via the command ```Rscript 004-leukocyte_plots.R```
 
 *If these scripts are used on another dataset, other parameters that may need to be changed include quality control parameters (filtering cutoffs), dimensionality reductions parameters (such as number of variable genes to include and number of principal components to include), and clustering parameters that Seurat uses in implementing the Louvain algorithm (resolution or res)
