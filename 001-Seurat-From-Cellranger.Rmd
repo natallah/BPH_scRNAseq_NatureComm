@@ -3,13 +3,13 @@ title: "Preprocessing, QC and Individual Sample Clustering"
 date: "`r Sys.Date()`"
 author: Nadia A. Lanman
 params:
-  num_dimensions_use: 15
+  num_dimensions_use: 30
   num_var_features: 3000
-  numfeatures_max: 5000
-  numfeatures_min: 300
+  numfeatures_max: 10000
+  numfeatures_min: 1000
   percent_mito_max: 22
   project_name: 009
-  resolution: 0.4
+  resolution: 0.2
   hd5_file: 1196/outs/filtered_feature_bc_matrix.h5
   out_dir: rmarkdown/
 output:
