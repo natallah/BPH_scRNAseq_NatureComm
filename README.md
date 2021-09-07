@@ -42,4 +42,6 @@ To install R packages through CRAN:
 To run scripts
 --------------------------------------------------------
    -After installation of CRAN and Bioconductor packages, change directory names to reflect your current directory, change parameters as desired and output names of files as desired.  Typical runtime is ~20 minutes and results in an html formatted document detailing main quality control, clustering, and marker gene results.
-4.  Ensure directory structure is appropriate for your system and click "knit"
+-Scripts included are not novel software scripts, but are RMarkdown scripts that utilize open-source, well-documented software packages.
+-RMarkdown scripts should be run in numerical order, from 001-Seurat-From-Cellranger-simple_nadia_citeseq.Rmd to 
+-Ensure directory structure is appropriate for your system and click "knit"
