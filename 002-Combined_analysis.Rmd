@@ -89,7 +89,7 @@ if (!parameters[["cache_mode"]]) {
 # Run the standard workflow for visualization and clustering
 combined_seurat_obj <- ScaleData(
   combined_seurat_obj,
-  vars.to.regress = c("nCount_RNA", "percent.mt"))
+  vars.to.regress = c("nCount_RNA", "percent.mt","S.Score","G2M.Score"))
 
 combined_seurat_obj <- RunPCA(
   combined_seurat_obj,
